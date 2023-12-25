@@ -190,9 +190,8 @@ func notCors(origin, host string) bool {
 		return true
 	}
 
-	if len(origin) > 9 && (
-		origin[:7] == "http://" && origin[7:] == host ||
-			origin[:8] == "https://" && origin[8:] == host) {
+	if len(origin) > 9 && (origin[:7] == "http://" && origin[7:] == host ||
+		origin[:8] == "https://" && origin[8:] == host) {
 		return true
 	}
 

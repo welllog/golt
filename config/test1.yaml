@@ -1,0 +1,7 @@
+name: demo1
+no: 1
+addr:
+  province: sichuan
+  city: huaweq
+  street: changan
+work: {"title": "engineer", "salary": 10000}

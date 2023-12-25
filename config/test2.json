@@ -1,0 +1,14 @@
+{
+    "locale": "en",
+    "messages": {
+        "message": "Hello World"
+    },
+    "layout": {
+        "header": {
+            "title": "Hello World"
+        },
+        "footer": {
+            "title": "Hello World"
+        }
+    }
+}

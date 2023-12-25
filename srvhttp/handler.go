@@ -21,6 +21,7 @@ func defResponseFunc(response any, err error, c *Context) {
 			ue = unierr.New(unierr.UnKnown, err.Error())
 		}
 
+		c.Header().Set("Content-Type", "application/json; charset=utf-8")
 		c.WriteHeader(ue.HttpCode())
 		b, _ := ue.MarshalJSON()
 		_, _ = c.Write(b)
@@ -38,6 +39,7 @@ func defResponseFunc(response any, err error, c *Context) {
 	}
 	b = append(b, '}')
 
+	c.Header().Set("Content-Type", "application/json; charset=utf-8")
 	c.WriteHeader(200)
 	_, _ = c.Write(b)
 }

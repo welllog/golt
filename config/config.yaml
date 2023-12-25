@@ -1,0 +1,41 @@
+  # one config source => multi namespace
+  # one or multi namespace => one config path
+  #            source
+  #     /         |         \
+  #    /          |          \
+  #   /           |           \
+  # namespace1  namespace2  namespace3
+  #   \           /           |
+  #    \         /            |
+  #     \       /             |
+  #      path1              path2
+  #
+  # config source
+  # file://<rootPath> load config from root path
+  # etcd://<addr>,<addr> load config from etcd
+  - source: file://
+    configs:
+      # namespace, used to distinguish different configurations with the same key
+      # multiple namespaces point to the same configuration path, separated by |
+      # namespace is unique globally, and namespace can only belong to one configuration source, and only has one path
+      - namespace: test/demo1 | test/demo2
+        # config file path relative to root path
+        path: test1.yaml
+        # dynamic load config, the value is true will watch the config change, default is false
+        dynamic: true
+      - namespace: test/demo3
+        path: test2.json
+        dynamic: false
+#  - source: etcd://127.0.0.1:2379
+#    configs:
+#      - namespace: test/demo4
+#        # etcd key path prefix
+#        path: /v1/test/demo4
+#        # dynamic load config, the value is true will watch the config change, default is false
+#        dynamic: true
+#      - namespace: test/demo5
+#        # etcd key path prefix
+#        path: /v1/test/demo5
+#        # dynamic load config, the value is true will watch the config change, default is false
+#        dynamic: false
+
