@@ -9,7 +9,7 @@
       },
       {
         "namespace": "test/demo3",
-        "path": "test2.yaml"
+        "path": "test2.json"
       }
     ]
   },

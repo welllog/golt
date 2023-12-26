@@ -64,5 +64,11 @@ func TestEngine_Get(t *testing.T) {
 	})
 	time.Sleep(time.Second * 30)
 
+	err = engine.Decode("test/demo1", "addr", &a, yaml.Unmarshal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println(a)
+
 	engine.Close()
 }

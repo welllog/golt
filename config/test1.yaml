@@ -1,7 +1,7 @@
 name: demo1
-no: 1
+no: 2
 addr:
   province: sichuan
-  city: huaweq
-  street: changan
+  city: chengdu
+  street: nanjing road
 work: {"title": "engineer", "salary": 10000}

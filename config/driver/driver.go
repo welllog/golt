@@ -2,10 +2,7 @@ package driver
 
 import "errors"
 
-var (
-	ErrNotFound          = errors.New("not found")
-	ErrUnsupportedFormat = errors.New("unsupported config file format")
-)
+var ErrNotFound = errors.New("not found")
 
 type Driver interface {
 	Namespaces() []string

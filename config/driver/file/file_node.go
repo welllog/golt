@@ -2,15 +2,7 @@ package file
 
 import (
 	"bytes"
-	"encoding/json"
-	"os"
-	"path/filepath"
-
-	"github.com/welllog/golt/config/driver"
-	"gopkg.in/yaml.v3"
 )
-
-var _buf = bytes.NewBuffer(make([]byte, 0, 1024))
 
 type entry struct {
 	// content is the raw content of the entry.
@@ -21,65 +13,39 @@ type entry struct {
 	hookFlag bool
 }
 
-func (e *entry) UnmarshalJSON(b []byte) error {
-	if bytes.Equal(e.content, b) {
-		return nil
-	}
-
-	e.content = append(e.content[:0], b...)
-	if e.hook != nil {
-		e.hookFlag = true
-	}
-	return nil
-}
-
-func (e *entry) UnmarshalYAML(value *yaml.Node) error {
-	_buf.Reset()
-	err := yaml.NewEncoder(_buf).Encode(value)
-	if err != nil {
-		return err
-	}
-
-	b := _buf.Bytes()
-	if bytes.Equal(e.content, b) {
-		return nil
-	}
-
-	e.content = append(e.content[:0], b...)
-	if e.hook != nil {
-		e.hookFlag = true
-	}
-	return nil
-}
-
 type fileNode struct {
 	dynamic bool
 	entries map[string]*entry
 }
 
-func (n *fileNode) Load(path string) error {
-	var fn func([]byte, any) error
+func (n *fileNode) SetFields(fields map[string]*field) {
+	for k, v := range n.entries {
+		if _, ok := fields[k]; !ok {
+			delete(n.entries, k)
+			continue
+		}
 
-	ext := filepath.Ext(path)
-	switch ext {
-	case ".json":
-		fn = json.Unmarshal
-	case ".yaml":
-		fn = yaml.Unmarshal
-	default:
-		return driver.ErrUnsupportedFormat
-	}
+		if !bytes.Equal(v.content, fields[k].content) {
+			v.content = fields[k].content
+			if v.hook != nil {
+				v.hookFlag = true
+			}
+		}
 
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
+		delete(fields, k)
 	}
 
 	if n.entries == nil {
-		n.entries = make(map[string]*entry, 5)
+		n.entries = make(map[string]*entry, len(fields))
 	}
 
-	return fn(b, &n.entries)
+	for k, v := range fields {
+		n.entries[k] = &entry{
+			content: v.content,
+		}
+
+		delete(fields, k)
+	}
 }
 
 func (n *fileNode) RegisterHook(key string, hook func([]byte) error) bool {
