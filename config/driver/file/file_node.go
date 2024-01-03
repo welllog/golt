@@ -2,13 +2,19 @@ package file
 
 import (
 	"bytes"
+
+	"github.com/welllog/golib/strz"
+	"github.com/welllog/golt/contract"
 )
 
 type entry struct {
-	// content is the raw content of the entry.
-	content []byte
-	// hook is the hook function that will be executed when the entry is updated.
-	hook func([]byte) error
+	// value is the value of the key.
+	value string
+	// hooks is a slice of hook functions that will be executed when the value is updated.
+	hooks []func([]byte) error
+
+	// exists is used to distinguish whether the value is an empty string or key does not exist.
+	exists bool
 	// hookFlag is the flag that indicates whether the hook function needs to be executed.
 	hookFlag bool
 }
@@ -18,61 +24,116 @@ type fileNode struct {
 	entries map[string]*entry
 }
 
-func (n *fileNode) SetFields(fields map[string]*field) {
-	for k, v := range n.entries {
-		if _, ok := fields[k]; !ok {
-			delete(n.entries, k)
-			continue
-		}
-
-		if !bytes.Equal(v.content, fields[k].content) {
-			v.content = fields[k].content
-			if v.hook != nil {
-				v.hookFlag = true
-			}
-		}
-
-		delete(fields, k)
-	}
-
+// CacheFrom caches the fields into the node.
+func (n *fileNode) CacheFrom(fields map[string]*field) {
 	if n.entries == nil {
 		n.entries = make(map[string]*entry, len(fields))
 	}
 
 	for k, v := range fields {
-		n.entries[k] = &entry{
-			content: v.content,
+		var value []byte
+		if v != nil && len(v.value) > 0 {
+			value = v.value
 		}
 
-		delete(fields, k)
+		e, ok := n.entries[k]
+		if ok {
+			if !e.exists || !bytes.Equal(strz.UnsafeBytes(e.value), value) {
+				e.exists = true
+				e.value = string(value)
+
+				if len(e.hooks) > 0 {
+					e.hookFlag = true
+				}
+			}
+
+			continue
+		}
+
+		n.entries[k] = &entry{
+			value:  string(value),
+			exists: true,
+		}
+	}
+
+	for k, v := range n.entries {
+		_, ok := fields[k]
+		if !ok {
+			if len(v.hooks) == 0 {
+				delete(n.entries, k)
+			} else {
+				v.value = ""
+				v.exists = false
+			}
+		}
 	}
 }
 
-func (n *fileNode) RegisterHook(key string, hook func([]byte) error) bool {
-	e, ok := n.entries[key]
-	if !ok {
+// OnKeyChange registers a hook function that will be executed when the value of the key is updated.
+// the key removed will not be executed.
+func (n *fileNode) OnKeyChange(key string, hook func([]byte) error) bool {
+	if !n.dynamic {
 		return false
 	}
 
-	e.hook = hook
+	e, ok := n.entries[key]
+	if !ok {
+		e = &entry{}
+		n.entries[key] = e
+	}
+
+	e.hooks = append(e.hooks, hook)
 	return true
 }
 
-func (n *fileNode) ExecuteHook() {
-	for _, e := range n.entries {
-		if e.hookFlag && e.hook != nil {
-			if err := e.hook(e.content); err != nil {
-				// TODO: log
+// ExecuteHook executes the hook functions of the keys.
+func (n *fileNode) ExecuteHook(fields map[string]*field, logger contract.Logger) {
+	for k, v := range fields {
+		e, ok := n.entries[k]
+		if ok {
+			if e.hookFlag && len(e.hooks) > 0 {
+				var value []byte
+				if v != nil {
+					value = v.value
+				}
+
+				logger.Debugf("key %s changed", k)
+				for _, hook := range e.hooks {
+					if err := hook(value); err != nil {
+						logger.Warnf("key %s hook failed: %s", k, err.Error())
+					}
+				}
 			}
+
+			e.hookFlag = false
 		}
-		e.hookFlag = false
 	}
 }
 
-func (n *fileNode) Get(key string) ([]byte, bool) {
+// UnsafeGet returns the value of the key.
+func (n *fileNode) UnsafeGet(key string) ([]byte, bool) {
 	e, ok := n.entries[key]
 	if !ok {
 		return nil, false
 	}
-	return e.content, true
+
+	if !e.exists {
+		return nil, false
+	}
+
+	return strz.UnsafeBytes(e.value), true
+}
+
+// GetString returns the value of the key.
+func (n *fileNode) GetString(key string) (string, bool) {
+	e, ok := n.entries[key]
+	if !ok {
+		return "", false
+	}
+
+	if !e.exists {
+		return "", false
+	}
+
+	return e.value, true
 }

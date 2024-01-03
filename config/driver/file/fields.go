@@ -1,15 +1,17 @@
 package file
 
 import (
+	"bytes"
+
 	"gopkg.in/yaml.v3"
 )
 
 type field struct {
-	content []byte
+	value []byte
 }
 
 func (f *field) UnmarshalJSON(b []byte) error {
-	f.content = append(f.content[:0], b...)
+	f.value = append(f.value[:0], b...)
 	return nil
 }
 
@@ -19,6 +21,6 @@ func (f *field) UnmarshalYAML(value *yaml.Node) error {
 		return err
 	}
 
-	f.content = b
+	f.value = bytes.TrimRight(b, "\n")
 	return nil
 }

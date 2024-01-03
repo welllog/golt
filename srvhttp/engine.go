@@ -1,15 +1,17 @@
 package srvhttp
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/gorilla/mux"
+	"github.com/welllog/golt/contract"
+	"github.com/welllog/olog"
 )
 
 type Engine struct {
 	Router
+	logger  contract.Logger
 	rspFunc ResponseFunc
 }
 
@@ -21,8 +23,14 @@ func WithResponseFunc(rspFunc ResponseFunc) Option {
 	}
 }
 
+func WithLogger(logger contract.Logger) Option {
+	return func(e *Engine) {
+		e.logger = logger
+	}
+}
+
 func New(opts ...Option) *Engine {
-	e := Engine{Router: Router{r: mux.NewRouter()}, rspFunc: defResponseFunc}
+	e := Engine{Router: Router{r: mux.NewRouter()}, rspFunc: defResponseFunc, logger: olog.GetLogger()}
 	for _, opt := range opts {
 		opt(&e)
 	}
@@ -74,9 +82,9 @@ func (e *Engine) PrintRoutes() {
 		queriesTemplates, _ := route.GetQueriesTemplates()
 		methods, _ := route.GetMethods()
 
-		fmt.Printf("ROUTE: %s%s; Methods: %s \n",
-			pathTemplate, strings.Join(queriesTemplates, ","), strings.Join(methods, ","),
-		)
+		e.logger.Debugf("ROUTE: %s%s; Methods: %s",
+			pathTemplate, strings.Join(queriesTemplates, ","), strings.Join(methods, ","))
+
 		return nil
 	})
 }

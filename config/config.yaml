@@ -65,7 +65,7 @@
   # etcd key is "/project/config/user/name", the value is "demo"
   # etcd key is "/project/config/user/no", the value is "1"
 
-  - source: file://
+  - source: file://config
     configs:
       # namespace, used to distinguish different configurations with the same key
       # multiple namespaces point to the same configuration path, separated by |
@@ -78,16 +78,16 @@
       - namespace: test/demo3
         path: test2.json
         dynamic: false
-#  - source: etcd://127.0.0.1:2379
-#    configs:
-#      - namespace: test/demo4
-#        # etcd key path prefix
-#        path: /v1/test/demo4
-#        # dynamic load config, the value is true will watch the config change, default is false
-#        dynamic: true
-#      - namespace: test/demo5
-#        # etcd key path prefix
-#        path: /v1/test/demo5
-#        # dynamic load config, the value is true will watch the config change, default is false
-#        dynamic: false
+  - source: etcd://127.0.0.1:2379
+    configs:
+      - namespace: test/demo4
+        # etcd key path prefix
+        path: /v1/test/demo4/
+        # dynamic load config, the value is true will watch the config change, default is false
+        dynamic: true
+      - namespace: test/demo5
+        # etcd key path prefix
+        path: /v1/test/demo5/
+        # dynamic load config, the value is true will watch the config change, default is false
+        dynamic: false
 

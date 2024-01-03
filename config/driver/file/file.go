@@ -15,6 +15,7 @@ import (
 	"github.com/welllog/golib/mapz"
 	"github.com/welllog/golt/config/driver"
 	"github.com/welllog/golt/config/meta"
+	"github.com/welllog/golt/contract"
 	"gopkg.in/yaml.v3"
 )
 
@@ -31,13 +32,15 @@ type file struct {
 	filepath2node  map[string]*fileNode
 	buf            map[string]*field
 	ch             chan string
+	logger         contract.Logger
 }
 
-func New(c meta.Config) (driver.Driver, error) {
+func New(c meta.Config, logger contract.Logger) (driver.Driver, error) {
 	fd := file{
 		namespace2node: make(map[string]*fileNode, len(c.Configs)),
 		filepath2node:  make(map[string]*fileNode, len(c.Configs)),
 		buf:            make(map[string]*field),
+		logger:         logger,
 	}
 
 	root := c.SourceAddr()
@@ -55,7 +58,7 @@ func New(c meta.Config) (driver.Driver, error) {
 			}
 
 			node = &fileNode{}
-			node.SetFields(fd.buf)
+			node.CacheFrom(fd.buf)
 			fd.filepath2node[path] = node
 		}
 
@@ -70,7 +73,7 @@ func New(c meta.Config) (driver.Driver, error) {
 	}
 
 	if len(fd.namespace2node) == 0 {
-		return nil, errors.New("config files is empty")
+		return nil, errors.New("config rules is empty")
 	}
 
 	if watch {
@@ -91,7 +94,7 @@ func (f *file) Namespaces() []string {
 	return nps
 }
 
-func (f *file) RegisterHook(namespace, key string, hook func([]byte) error) bool {
+func (f *file) OnKeyChange(namespace, key string, hook func([]byte) error) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -100,19 +103,10 @@ func (f *file) RegisterHook(namespace, key string, hook func([]byte) error) bool
 		return false
 	}
 
-	return node.RegisterHook(key, hook)
+	return node.OnKeyChange(key, hook)
 }
 
 func (f *file) Get(namespace, key string) ([]byte, error) {
-	b, err := f.UnsafeGet(namespace, key)
-	if err != nil {
-		return nil, err
-	}
-
-	return append([]byte(nil), b...), nil
-}
-
-func (f *file) UnsafeGet(namespace, key string) ([]byte, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
@@ -121,7 +115,7 @@ func (f *file) UnsafeGet(namespace, key string) ([]byte, error) {
 		return nil, driver.ErrNotFound
 	}
 
-	b, ok := node.Get(key)
+	b, ok := node.UnsafeGet(key)
 	if !ok {
 		return nil, driver.ErrNotFound
 	}
@@ -129,13 +123,21 @@ func (f *file) UnsafeGet(namespace, key string) ([]byte, error) {
 	return b, nil
 }
 
-func (f *file) Decode(namespace, key string, value any, unmarshalFunc func([]byte, any) error) error {
-	b, err := f.UnsafeGet(namespace, key)
-	if err != nil {
-		return err
+func (f *file) GetString(namespace, key string) (string, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	node, ok := f.namespace2node[namespace]
+	if !ok {
+		return "", driver.ErrNotFound
 	}
 
-	return unmarshalFunc(b, value)
+	value, ok := node.GetString(key)
+	if !ok {
+		return "", driver.ErrNotFound
+	}
+
+	return value, nil
 }
 
 func (f *file) Close() {
@@ -182,6 +184,7 @@ func (f *file) watch() error {
 		if node.dynamic {
 			dir := filepath.Dir(path)
 			if set.Add(dir) {
+				f.logger.Debugf("watch path: %s", dir)
 				err = watcher.Add(dir)
 				if err != nil {
 					return fmt.Errorf("watcher add path failed: %s", err.Error())
@@ -214,7 +217,8 @@ func (f *file) dedup() {
 			if !ok { // Channel was closed (i.e. Watcher.Close() was called).
 				return
 			}
-			fmt.Printf("watch err: %v", err)
+
+			f.logger.Errorf("file watcher err: %v", err)
 		case e, ok := <-f.watcher.Events:
 			if !ok { // Channel was closed (i.e. Watcher.Close() was called).
 				return
@@ -257,17 +261,19 @@ func (f *file) listenAndRefresh() {
 			continue
 		}
 
+		f.logger.Debugf("file %s changed", path)
+
 		if err := f.loadToBuf(path); err != nil {
 			// TODO log
 			continue
 		}
 
 		f.mu.Lock()
-		node.SetFields(f.buf)
+		node.CacheFrom(f.buf)
 		f.mu.Unlock()
 
 		f.mu.RLock()
-		node.ExecuteHook()
+		node.ExecuteHook(f.buf, f.logger)
 		f.mu.RUnlock()
 	}
 }

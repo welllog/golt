@@ -28,7 +28,7 @@ func ExampleEngine_ServeHTTP() {
 	// {"data":{"greeting":"hello"}}
 }
 
-func ExampleEngine_Error() {
+func ExampleEngine_ServeHTTP_2() {
 	engine := New()
 	engine.POST("/test2", func(c *Context) (any, error) {
 		return nil, unierr.New(1000, "test error")
@@ -48,7 +48,7 @@ func ExampleEngine_Error() {
 	// {"code":1000,"msg":"test error"}
 }
 
-func ExampleEngine_Error2() {
+func ExampleEngine_ServeHTTP_3() {
 	engine := New()
 	engine.POST("/test3", func(c *Context) (any, error) {
 		return nil, unierr.New(1000, "test error").WithData(map[string]int{"reason": 20})

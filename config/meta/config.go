@@ -1,6 +1,8 @@
 package meta
 
-import "strings"
+import (
+	"strings"
+)
 
 type Config struct {
 	Source  string `json:"source" yaml:"source"`
