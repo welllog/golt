@@ -3,7 +3,7 @@
 </p>
 
 # golt
-一个简单的http api开发工具库，尝试做到区别于Go标准http库的开发方式，在api开发上更简洁、符合直觉
+一个简单的http api开发工具库，尝试做到区别于Go标准http库的开发方式，在api开发上更简洁、易用
 
 ### srvhttp库
 #### http handler

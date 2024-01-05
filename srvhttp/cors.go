@@ -48,7 +48,6 @@ func (c *CorsConfig) apply(request *http.Request, writer http.ResponseWriter) {
 	setHeaders := c.normalHeaders
 	if request.Method == http.MethodOptions {
 		setHeaders = c.preflightHeaders
-		defer writer.WriteHeader(http.StatusNoContent)
 	}
 
 	for k, v := range setHeaders {

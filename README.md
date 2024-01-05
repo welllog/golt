@@ -4,7 +4,7 @@
 
 # golt
 a simple http api development tool library, trying to be different from the development method of Go standard http
-library, more concise and intuitive in api development
+library, more concise and easy to use in api development
 
 ### srvhttp library
 #### http handler

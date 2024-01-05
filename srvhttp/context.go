@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/gorilla/mux"
@@ -40,12 +41,12 @@ func (c *Context) Set(key string, value any) {
 	c.mu.Unlock()
 }
 
-func (c *Context) Get(key string) any {
+func (c *Context) Get(key string) (any, bool) {
 	c.mu.RLock()
-	v := c.values[key]
+	v, ok := c.values[key]
 	c.mu.RUnlock()
 
-	return v
+	return v, ok
 }
 
 func (c *Context) Value(key any) any {
@@ -65,6 +66,24 @@ func (c *Context) Value(key any) any {
 
 func (c *Context) PathParams() map[string]string {
 	return mux.Vars(c.Request)
+}
+
+func (c *Context) RouteName() string {
+	return mux.CurrentRoute(c.Request).GetName()
+}
+
+func (c *Context) PathTemplate() string {
+	tpl, _ := mux.CurrentRoute(c.Request).GetPathTemplate()
+	return tpl
+}
+
+func (c *Context) PathRegex() string {
+	rgx, _ := mux.CurrentRoute(c.Request).GetPathRegexp()
+	return rgx
+}
+
+func (c *Context) ClientIP() string {
+	return ClientIP(c.Request)
 }
 
 func (c *Context) Header() http.Header {
@@ -115,4 +134,22 @@ func (c *Context) Flush() {
 		}
 		flusher.Flush()
 	}
+}
+
+func ClientIP(r *http.Request) string {
+	xForwardedFor := r.Header.Get("X-Forwarded-For")
+	ip := strings.TrimSpace(strings.Split(xForwardedFor, ",")[0])
+	if ip != "" {
+		return ip
+	}
+
+	ip = strings.TrimSpace(r.Header.Get("X-Real-Ip"))
+	if ip != "" {
+		return ip
+	}
+
+	if ip, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr)); err == nil {
+		return ip
+	}
+	return ""
 }

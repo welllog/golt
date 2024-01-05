@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"net/http"
 
 	"github.com/welllog/golt/unierr"
 )
@@ -25,6 +26,11 @@ func defResponseFunc(response any, err error, c *Context) {
 		c.WriteHeader(ue.HttpCode())
 		b, _ := ue.MarshalJSON()
 		_, _ = c.Write(b)
+		return
+	}
+
+	if response == nil {
+		c.WriteHeader(http.StatusNoContent)
 		return
 	}
 
