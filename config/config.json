@@ -1,0 +1,32 @@
+[
+  {
+    "source": "file://",
+    "configs": [
+      {
+        "namespace": "test/demo1 | test/demo2",
+        "path": "test1.yaml",
+        "dynamic": true
+      },
+      {
+        "namespace": "test/demo3",
+        "path": "test2.json"
+      }
+    ]
+  },
+  {
+    "source": "etcd://127.0.0.1:2379",
+    "configs": [
+      {
+        "namespace": "test/demo4",
+        "path": "/v1/test/demo4",
+        "dynamic": true
+      },
+      {
+        "namespace": "test/demo5",
+        "path": "/v1/test/demo5",
+        "dynamic": false
+      }
+    ]
+  }
+]
+

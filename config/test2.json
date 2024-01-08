@@ -1,0 +1,18 @@
+{
+    "locale": "zh",
+    "messages": {
+        "message": "Hello World"
+    },
+    "layout": {
+        "header": {
+            "title": "Hello World!!!"
+        },
+        "footer": {
+            "title": "Hello World"
+        }
+    },
+    "no_value": "",
+    "max_value": 120,
+    "test_value": 12.3,
+    "test_name": null
+}
