@@ -61,6 +61,8 @@ user.Use(authMiddleware)
 
 engine.GET("/index", indexHandler)
 engine.Sub().GET("/index/menu", menuhandler)
+engine.Sub().GET("/index/articles/{category}/{id:[0-9]+}", articleHandler)
+engine.Static("/static", "./static", false)
 
 // 跨域
 engine.UseCors(srvhttp.CorsConfig{

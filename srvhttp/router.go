@@ -2,6 +2,7 @@ package srvhttp
 
 import (
 	"net/http"
+	"os"
 
 	"github.com/gorilla/mux"
 )
@@ -101,6 +102,18 @@ func (r Router) Any(path string, handler Handler) Route {
 	return Route{r: route}
 }
 
+func (r Router) Static(relativePath, root string, listFiles bool) {
+	r.StaticFS(relativePath, http.Dir(root), listFiles)
+}
+
+func (r Router) StaticFS(relativePath string, fs http.FileSystem, listFiles bool) {
+	if !listFiles {
+		fs = onlyFilesFS{fs}
+	}
+
+	checkRoute(r.r.PathPrefix(relativePath).Handler(http.StripPrefix(relativePath, http.FileServer(fs))))
+}
+
 func (r Route) Name(name string) {
 	checkRoute(r.r.Name(name))
 }
@@ -116,4 +129,27 @@ func checkRoute(route *mux.Route) {
 	if err := route.GetError(); err != nil {
 		panic(err.Error())
 	}
+}
+
+type onlyFilesFS struct {
+	fs http.FileSystem
+}
+
+type neuteredReaddirFile struct {
+	http.File
+}
+
+// Open conforms to http.Filesystem.
+func (fs onlyFilesFS) Open(name string) (http.File, error) {
+	f, err := fs.fs.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	return neuteredReaddirFile{f}, nil
+}
+
+// Readdir overrides the http.File default implementation.
+func (f neuteredReaddirFile) Readdir(_ int) ([]os.FileInfo, error) {
+	// this disables directory listing
+	return nil, nil
 }
