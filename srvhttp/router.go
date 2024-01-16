@@ -114,6 +114,21 @@ func (r Router) StaticFS(relativePath string, fs http.FileSystem, listFiles bool
 	checkRoute(r.r.PathPrefix(relativePath).Handler(http.StripPrefix(relativePath, http.FileServer(fs))))
 }
 
+func (r Router) StaticFile(relativePath, filepath string) {
+	checkRoute(r.r.PathPrefix(relativePath).HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.ServeFile(writer, request, filepath)
+	}))
+}
+
+func (r Router) StaticFileFS(relativePath, filepath string, fs http.FileSystem) {
+	checkRoute(r.r.PathPrefix(relativePath).HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		old := request.URL.Path
+		request.URL.Path = filepath
+		http.FileServer(fs).ServeHTTP(writer, request)
+		request.URL.Path = old
+	}))
+}
+
 func (r Route) Name(name string) {
 	checkRoute(r.r.Name(name))
 }
