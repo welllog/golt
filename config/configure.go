@@ -116,7 +116,7 @@ func (e *Configure) UnsafeGet(namespace, key string) ([]byte, error) {
 	return d.Get(namespace, key)
 }
 
-func (e *Configure) String(namespace, key string) (string, error) {
+func (e *Configure) GetString(namespace, key string) (string, error) {
 	d, ok := e.ds[namespace]
 	if !ok {
 		return "", ErrNotFound
@@ -125,13 +125,22 @@ func (e *Configure) String(namespace, key string) (string, error) {
 	return d.GetString(namespace, key)
 }
 
+func (e *Configure) String(namespace, key string) (string, error) {
+	s, err := e.GetString(namespace, key)
+	if err != nil {
+		return "", err
+	}
+
+	return unquote(strings.TrimSpace(s)), nil
+}
+
 func (e *Configure) Int64(namespace, key string) (int64, error) {
 	s, err := e.String(namespace, key)
 	if err != nil {
 		return 0, err
 	}
 
-	return strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	return strconv.ParseInt(s, 10, 64)
 }
 
 func (e *Configure) Int(namespace, key string) (int, error) {
@@ -140,7 +149,7 @@ func (e *Configure) Int(namespace, key string) (int, error) {
 		return 0, err
 	}
 
-	return strconv.Atoi(strings.TrimSpace(s))
+	return strconv.Atoi(s)
 }
 
 func (e *Configure) Float64(namespace, key string) (float64, error) {
@@ -149,7 +158,7 @@ func (e *Configure) Float64(namespace, key string) (float64, error) {
 		return 0, err
 	}
 
-	return strconv.ParseFloat(strings.TrimSpace(s), 64)
+	return strconv.ParseFloat(s, 64)
 }
 
 func (e *Configure) Bool(namespace, key string) (bool, error) {
@@ -158,7 +167,7 @@ func (e *Configure) Bool(namespace, key string) (bool, error) {
 		return false, err
 	}
 
-	return strconv.ParseBool(strings.TrimSpace(s))
+	return strconv.ParseBool(s)
 }
 
 func (e *Configure) YamlDecode(namespace, key string, value any) error {
@@ -187,4 +196,18 @@ func (e *Configure) Close() {
 	for _, v := range e.ds {
 		v.Close()
 	}
+}
+
+func unquote(s string) string {
+	n := len(s)
+	if n < 2 {
+		return s
+	}
+
+	n--
+	if (s[0] == '"' && s[n] == '"') || (s[0] == '\'' && s[n] == '\'') {
+		return s[1:n]
+	}
+
+	return s
 }

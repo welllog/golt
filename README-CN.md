@@ -112,3 +112,6 @@ engine.Any("/page", func(ctx *srvhttp.Context) (any, error) {
     return "ok", nil
 })
 ```
+
+### config 库
+

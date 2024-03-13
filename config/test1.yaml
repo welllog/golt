@@ -3,7 +3,7 @@ no: 2
 addr:
   province: sichuan
   city: chengdu
-  street: nanjing \n\n
+  street: nanjing
 
 leader: true
 work: {"title": "engineer", "salary": 10000}
