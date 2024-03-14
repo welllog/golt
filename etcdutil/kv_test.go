@@ -273,7 +273,13 @@ func (t *testKV) Get(ctx context.Context, key string, opts ...clientv3.OpOption)
 }
 
 func (t *testKV) Delete(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.DeleteResponse, error) {
-	panic("implement me")
+	for i, v := range t.kvs {
+		if v.key == key {
+			t.kvs = append(t.kvs[:i], t.kvs[i+1:]...)
+			return &clientv3.DeleteResponse{}, nil
+		}
+	}
+	return &clientv3.DeleteResponse{}, nil
 }
 
 func (t *testKV) Compact(ctx context.Context, rev int64, opts ...clientv3.CompactOption) (*clientv3.CompactResponse, error) {
