@@ -14,7 +14,6 @@ func ExampleAtomicStore() {
 	if err != nil {
 		panic(err)
 	}
-	defer engine.Close()
 
 	var c workConfig
 	err = AtomicStore(engine, "test/demo1", "work", &c.work, json.Unmarshal)
@@ -32,7 +31,6 @@ func ExampleAtomicLoad() {
 	if err != nil {
 		panic(err)
 	}
-	defer engine.Close()
 
 	var c workConfig
 	err = AtomicStore(engine, "test/demo1", "work", &c.work, json.Unmarshal)

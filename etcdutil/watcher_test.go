@@ -2,12 +2,13 @@ package etcdutil
 
 import (
 	"context"
-	"github.com/welllog/golib/testz"
-	"go.etcd.io/etcd/api/v3/mvccpb"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/welllog/golib/testz"
+	"go.etcd.io/etcd/api/v3/mvccpb"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 func TestKv_Handle(t *testing.T) {
