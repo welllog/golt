@@ -36,37 +36,40 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 		opt(&opts)
 	}
 
-	if len(opts.etcdConfig.Endpoints) == 0 {
-		opts.etcdConfig.Endpoints = strings.Split(c.SourceAddr(), ",")
-	}
+	if opts.etcdClient == nil {
+		if len(opts.etcdConfig.Endpoints) == 0 {
+			opts.etcdConfig.Endpoints = strings.Split(c.SourceAddr(), ",")
+		}
 
-	if opts.etcdConfig.DialTimeout == 0 {
-		opts.etcdConfig.DialTimeout = time.Minute
-	}
+		if opts.etcdConfig.DialTimeout == 0 {
+			opts.etcdConfig.DialTimeout = time.Minute
+		}
 
-	if opts.etcdConfig.DialKeepAliveTime == 0 {
-		opts.etcdConfig.DialKeepAliveTime = 2 * time.Minute
-	}
+		if opts.etcdConfig.DialKeepAliveTime == 0 {
+			opts.etcdConfig.DialKeepAliveTime = 2 * time.Minute
+		}
 
-	if opts.etcdConfig.DialKeepAliveTimeout == 0 {
-		opts.etcdConfig.DialKeepAliveTimeout = time.Minute
+		if opts.etcdConfig.DialKeepAliveTimeout == 0 {
+			opts.etcdConfig.DialKeepAliveTimeout = time.Minute
+		}
+
+		client, err := clientv3.New(opts.etcdConfig)
+		if err != nil {
+			return nil, err
+		}
+		opts.etcdClient = client
 	}
 
 	if opts.commonPrefixMinLen == 0 {
 		opts.commonPrefixMinLen = 4
 	}
 
-	client, err := clientv3.New(opts.etcdConfig)
-	if err != nil {
-		return nil, err
-	}
-
 	ed := etcd{
-		client:         client,
+		client:         opts.etcdClient,
 		namespace2node: make(map[string]*etcdutil.Kv, len(c.Configs)),
 	}
 
-	watcher := etcdutil.NewWatcher(client).SetCommonPrefixMinLen(opts.commonPrefixMinLen).SetLogger(logger)
+	watcher := etcdutil.NewWatcher(opts.etcdClient).SetCommonPrefixMinLen(opts.commonPrefixMinLen).SetLogger(logger)
 	path2node := make(map[string]*etcdutil.Kv, len(c.Configs))
 	watchPath := make(dsz.Set[string], len(c.Configs))
 
@@ -75,7 +78,7 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 
 		node, ok := path2node[cfg.Path]
 		if !ok {
-			node = etcdutil.NewKv(cfg.Path, client).SetLogger(logger)
+			node = etcdutil.NewKv(cfg.Path, opts.etcdClient).SetLogger(logger)
 			path2node[cfg.Path] = node
 
 			if opts.preload || !cfg.Dynamic {
@@ -83,7 +86,7 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 				err := node.Preload(ctx)
 				cancel()
 				if err != nil {
-					_ = client.Close()
+					_ = opts.etcdClient.Close()
 					return nil, err
 				}
 			}
