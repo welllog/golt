@@ -113,3 +113,60 @@ engine.Any("page", func(ctx *srvhttp.Context) (any, error) {
     return "ok", nil
 })
 ```
+
+### config library
+golt's config library provides unified configuration management, supports loading configuration from files,
+etcd, supports dynamic loading of configuration, and supports configuration update notification.
+
+#### Load configuration from file
+```yaml
+  # Load the configuration file from the file system
+  - source: file://
+    configs:
+      # The namespace determines which file the configuration is read from.
+      - namespace: test/demo1 | test/demo2
+        # The file path is the path of the configuration file.
+        path: test1.yaml
+        # Whether to monitor the changes of the file to dynamically load the configuration
+        dynamic: true
+```
+
+#### Load configuration from etcd
+```yaml
+  # Load the configuration file from etcd server
+  - source: etcd://127.0.0.1:2379
+    configs:
+      # The namespace determines which etcd and key path the configuration is read from.
+      - namespace: test/demo4
+        # The key path under the current etcd
+        path: /v1/test/demo4/
+        # Whether to monitor the changes of the key path to dynamically load the configuration
+        dynamic: true
+```
+
+#### config usage
+```
+c, err := FromFile("./config.yaml", nil) 
+if err != nil {
+    panic(err)
+}
+defer c.Close()
+
+c.String("test/demo1", "app_name")
+c.Int64("test/demo2", "retry")
+c.Int("test/demo2", "retry")
+c.Float64("test/demo4", "rate")
+c.Bool("test/demo4", "enable")
+c.YamlDecode("test/demo1", "log", &logConf)
+c.JsonDecode("test/demo4", "data", &data)
+c.Decode("test/demo4", "data", &data, json.Unmarshal)
+
+c.Get("test/demo1", "app_name")
+c.UnsafeGet("test/demo1", "app_name")
+c.GetString("test/demo1", "app_name")
+
+c.OnKeyChange("test/demo1", "app_name", func([]byte) error) {
+    // do something
+}
+```
+        

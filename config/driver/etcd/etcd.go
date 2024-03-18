@@ -27,17 +27,49 @@ type etcd struct {
 }
 
 func New(c meta.Config, logger contract.Logger) (driver.Driver, error) {
-	client, err := newEtcdClient(c.SourceAddr())
-	if err != nil {
-		return nil, err
+	return NewAdvanced(c, logger)
+}
+
+func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driver.Driver, error) {
+	opts := etcdDriverOption{}
+	for _, opt := range options {
+		opt(&opts)
+	}
+
+	if opts.etcdClient == nil {
+		if len(opts.etcdConfig.Endpoints) == 0 {
+			opts.etcdConfig.Endpoints = strings.Split(c.SourceAddr(), ",")
+		}
+
+		if opts.etcdConfig.DialTimeout == 0 {
+			opts.etcdConfig.DialTimeout = time.Minute
+		}
+
+		if opts.etcdConfig.DialKeepAliveTime == 0 {
+			opts.etcdConfig.DialKeepAliveTime = 2 * time.Minute
+		}
+
+		if opts.etcdConfig.DialKeepAliveTimeout == 0 {
+			opts.etcdConfig.DialKeepAliveTimeout = time.Minute
+		}
+
+		client, err := clientv3.New(opts.etcdConfig)
+		if err != nil {
+			return nil, err
+		}
+		opts.etcdClient = client
+	}
+
+	if opts.commonPrefixMinLen == 0 {
+		opts.commonPrefixMinLen = 4
 	}
 
 	ed := etcd{
-		client:         client,
+		client:         opts.etcdClient,
 		namespace2node: make(map[string]*etcdutil.Kv, len(c.Configs)),
 	}
 
-	watcher := etcdutil.NewWatcher(client).SetCommonPrefixMinLen(4).SetLogger(logger)
+	watcher := etcdutil.NewWatcher(opts.etcdClient).SetCommonPrefixMinLen(opts.commonPrefixMinLen).SetLogger(logger)
 	path2node := make(map[string]*etcdutil.Kv, len(c.Configs))
 	watchPath := make(dsz.Set[string], len(c.Configs))
 
@@ -46,15 +78,15 @@ func New(c meta.Config, logger contract.Logger) (driver.Driver, error) {
 
 		node, ok := path2node[cfg.Path]
 		if !ok {
-			node = etcdutil.NewKv(cfg.Path, client).SetLogger(logger)
+			node = etcdutil.NewKv(cfg.Path, opts.etcdClient).SetLogger(logger)
 			path2node[cfg.Path] = node
 
-			if !cfg.Dynamic {
+			if opts.preload || !cfg.Dynamic {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 				err := node.Preload(ctx)
 				cancel()
 				if err != nil {
-					_ = client.Close()
+					_ = opts.etcdClient.Close()
 					return nil, err
 				}
 			}
@@ -142,13 +174,4 @@ func (e *etcd) GetString(namespace, key string) (string, error) {
 
 func (e *etcd) Close() {
 	_ = e.client.Close()
-}
-
-func newEtcdClient(addr string) (*clientv3.Client, error) {
-	return clientv3.New(clientv3.Config{
-		Endpoints:            strings.Split(addr, ","),
-		DialTimeout:          time.Minute,
-		DialKeepAliveTime:    2 * time.Minute,
-		DialKeepAliveTimeout: time.Minute,
-	})
 }

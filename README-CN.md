@@ -112,3 +112,58 @@ engine.Any("/page", func(ctx *srvhttp.Context) (any, error) {
     return "ok", nil
 })
 ```
+
+### config 库
+golt的config库提供了统一的配置管理，支持从文件、etcd加载配置，支持动态加载配置，支持配置更新通知。
+其读取源需要一个额外的文件配置，config.FromFile("config.yaml"),其中config.yaml中指定了读取配置的源以及映射方式
+
+#### 从文件加载配置
+从文件读取配置的
+```yaml
+  # 加载配置的源为文件系统
+  - source: file://
+    configs:
+      # 命名空间，决定了该配置从哪个文件中读取
+      - namespace: test/demo1 | test/demo2
+        # 命名空间指向的文件
+        path: test1.yaml
+        # 是否监听该文件变动来动态加载配置
+        dynamic: true
+```
+#### 从etcd加载配置
+```yaml
+  # 加载配置的源为etcd以及地址
+  - source: etcd://127.0.0.1:2379
+    configs:
+      # 命名空间，决定了该配置从哪个etcd及其key path中读取
+      - namespace: test/demo4
+        # 当前etcd下的key path
+        path: /v1/test/demo4/
+        # 是否监听该key path变动来动态加载配置
+        dynamic: true
+```
+#### config使用概览
+```
+c, err := FromFile("./config.yaml", nil) 
+if err != nil {
+    panic(err)
+}
+defer c.Close()
+
+c.String("test/demo1", "app_name")
+c.Int64("test/demo2", "retry")
+c.Int("test/demo2", "retry")
+c.Float64("test/demo4", "rate")
+c.Bool("test/demo4", "enable")
+c.YamlDecode("test/demo1", "log", &logConf)
+c.JsonDecode("test/demo4", "data", &data)
+c.Decode("test/demo4", "data", &data, json.Unmarshal)
+
+c.Get("test/demo1", "app_name")
+c.UnsafeGet("test/demo1", "app_name")
+c.GetString("test/demo1", "app_name")
+
+c.OnKeyChange("test/demo1", "app_name", func([]byte) error) {
+    // do something
+}
+```
