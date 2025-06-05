@@ -98,8 +98,8 @@ func (e *Configure) OnKeyChange(namespace, key string, hook func([]byte) error) 
 	return ok
 }
 
-func (e *Configure) Get(namespace, key string) ([]byte, error) {
-	b, err := e.UnsafeGet(namespace, key)
+func (e *Configure) GetRaw(namespace, key string) ([]byte, error) {
+	b, err := e.UnsafeGetRaw(namespace, key)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +107,7 @@ func (e *Configure) Get(namespace, key string) ([]byte, error) {
 	return append([]byte(nil), b...), nil
 }
 
-func (e *Configure) UnsafeGet(namespace, key string) ([]byte, error) {
+func (e *Configure) UnsafeGetRaw(namespace, key string) ([]byte, error) {
 	d, ok := e.ds[namespace]
 	if !ok {
 		return nil, ErrNotFound
@@ -116,7 +116,7 @@ func (e *Configure) UnsafeGet(namespace, key string) ([]byte, error) {
 	return d.Get(namespace, key)
 }
 
-func (e *Configure) GetString(namespace, key string) (string, error) {
+func (e *Configure) GetRawString(namespace, key string) (string, error) {
 	d, ok := e.ds[namespace]
 	if !ok {
 		return "", ErrNotFound
@@ -126,12 +126,12 @@ func (e *Configure) GetString(namespace, key string) (string, error) {
 }
 
 func (e *Configure) String(namespace, key string) (string, error) {
-	s, err := e.GetString(namespace, key)
+	s, err := e.GetRawString(namespace, key)
 	if err != nil {
 		return "", err
 	}
 
-	return unquote(strings.TrimSpace(s)), nil
+	return unquote(s), nil
 }
 
 func (e *Configure) Int64(namespace, key string) (int64, error) {
@@ -199,14 +199,21 @@ func (e *Configure) Close() {
 }
 
 func unquote(s string) string {
+	s = strings.TrimSpace(s)
 	n := len(s)
 	if n < 2 {
 		return s
 	}
 
-	n--
-	if (s[0] == '"' && s[n] == '"') || (s[0] == '\'' && s[n] == '\'') {
-		return s[1:n]
+	if s[0] == '"' && s[n-1] == '"' {
+		if unquoted, err := strconv.Unquote(s); err == nil {
+			return unquoted
+		}
+		return s[1 : n-1]
+	}
+
+	if s[0] == '\'' && s[n-1] == '\'' {
+		return s[1 : n-1]
 	}
 
 	return s
