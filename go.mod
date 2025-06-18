@@ -1,12 +1,14 @@
 module github.com/welllog/golt
 
-go 1.21.3
+go 1.22
+
+toolchain go1.24.0
 
 require (
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/gorilla/mux v1.8.1
 	github.com/welllog/golib v0.0.21
-	github.com/welllog/olog v0.1.1
+	github.com/welllog/olog v0.1.7
 	go.etcd.io/etcd/api/v3 v3.5.11
 	go.etcd.io/etcd/client/v3 v3.5.11
 	google.golang.org/grpc v1.60.0
@@ -21,8 +23,10 @@ require (
 	github.com/golang/protobuf v1.5.3 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.5.11 // indirect
 	go.uber.org/atomic v1.7.0 // indirect
-	go.uber.org/multierr v1.6.0 // indirect
-	go.uber.org/zap v1.17.0 // indirect
+	go.uber.org/dig v1.19.0 // indirect
+	go.uber.org/fx v1.24.0 // indirect
+	go.uber.org/multierr v1.10.0 // indirect
+	go.uber.org/zap v1.26.0 // indirect
 	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/sys v0.13.0 // indirect
 	golang.org/x/text v0.13.0 // indirect

@@ -3,6 +3,12 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/welllog/golt/config/driver"
+	"github.com/welllog/golt/config/driver/etcd"
+	"github.com/welllog/golt/config/meta"
+	"github.com/welllog/golt/contract"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 type workConfig struct {
@@ -10,7 +16,14 @@ type workConfig struct {
 }
 
 func ExampleAtomicStore() {
-	engine, err := FromFile("./config.yaml", nil)
+	driver.RegisterDriver("etcd", func(config meta.Config, logger contract.Logger) (driver.Driver, error) {
+		return etcd.NewAdvanced(config, logger, etcd.WithExistsEtcdClient(&clientv3.Client{
+			KV:      &testKV{},
+			Watcher: &testWatcher{},
+		}))
+	})
+
+	engine, err := FromFile("./config.yaml")
 	if err != nil {
 		panic(err)
 	}
@@ -27,7 +40,14 @@ func ExampleAtomicStore() {
 }
 
 func ExampleAtomicLoad() {
-	engine, err := FromFile("./config.yaml", nil)
+	driver.RegisterDriver("etcd", func(config meta.Config, logger contract.Logger) (driver.Driver, error) {
+		return etcd.NewAdvanced(config, logger, etcd.WithExistsEtcdClient(&clientv3.Client{
+			KV:      &testKV{},
+			Watcher: &testWatcher{},
+		}))
+	})
+
+	engine, err := FromFile("./config.yaml")
 	if err != nil {
 		panic(err)
 	}

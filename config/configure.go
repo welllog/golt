@@ -3,15 +3,12 @@ package config
 import (
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/welllog/golt/config/driver"
 	"github.com/welllog/golt/config/meta"
 	"github.com/welllog/golt/contract"
-	"github.com/welllog/olog"
 	"gopkg.in/yaml.v3"
 
 	_ "github.com/welllog/golt/config/driver/etcd"
@@ -25,44 +22,15 @@ type Configure struct {
 	logger contract.Logger
 }
 
-func FromFile(file string, logger contract.Logger) (*Configure, error) {
-	var (
-		cs []meta.Config
-		fn func([]byte, any) error
-	)
+type UnmarshalFunc func([]byte, any) error
 
-	ext := filepath.Ext(file)
-	switch ext {
-	case ".json":
-		fn = json.Unmarshal
-	case ".yaml":
-		fn = yaml.Unmarshal
-	default:
-		return nil, errors.New("unsupported config file format")
-	}
-
-	b, err := os.ReadFile(file)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := fn(b, &cs); err != nil {
-		return nil, err
-	}
-
-	if logger == nil {
-		logger = olog.GetLogger()
-	}
-	return newConfigure(cs, logger)
-}
-
-func newConfigure(cs []meta.Config, logger contract.Logger) (*Configure, error) {
+func newConfigure(cfs []meta.Config, logger contract.Logger) (*Configure, error) {
 	e := Configure{
-		ds:     make(map[string]driver.Driver, len(cs)*2),
+		ds:     make(map[string]driver.Driver, len(cfs)*2),
 		logger: logger,
 	}
 
-	for _, c := range cs {
+	for _, c := range cfs {
 		d, err := driver.New(c, logger)
 		if err != nil {
 			logger.Errorf("new driver failed: %s %s", c.SourceSchema(), c.SourceAddr())
@@ -178,7 +146,7 @@ func (e *Configure) JsonDecode(namespace, key string, value any) error {
 	return e.Decode(namespace, key, value, json.Unmarshal)
 }
 
-func (e *Configure) Decode(namespace, key string, value any, unmarshalFunc func([]byte, any) error) error {
+func (e *Configure) Decode(namespace, key string, value any, fn UnmarshalFunc) error {
 	d, ok := e.ds[namespace]
 	if !ok {
 		return ErrNotFound
@@ -189,7 +157,7 @@ func (e *Configure) Decode(namespace, key string, value any, unmarshalFunc func(
 		return err
 	}
 
-	return unmarshalFunc(b, value)
+	return fn(b, value)
 }
 
 func (e *Configure) Close() {

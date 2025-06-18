@@ -143,10 +143,22 @@ etcd, supports dynamic loading of configuration, and supports configuration upda
         # Whether to monitor the changes of the key path to dynamically load the configuration
         dynamic: true
 ```
+#### Load configuration from custom etcd
+```yaml
+  # Load the configuration file from custom etcd
+  - source: custom_etcd://
+    configs:
+      # The namespace determines which etcd and key path the configuration is read from.
+      - namespace: test/demo4
+        # The key path under the current etcd
+        path: /v1/test/demo4/
+        # Whether to monitor the changes of the key path to dynamically load the configuration
+        dynamic: true
+```
 
 #### config usage
 ```
-c, err := FromFile("./config.yaml", nil) 
+c, err := FromFile("./config.yaml") 
 if err != nil {
     panic(err)
 }
@@ -161,9 +173,9 @@ c.YamlDecode("test/demo1", "log", &logConf)
 c.JsonDecode("test/demo4", "data", &data)
 c.Decode("test/demo4", "data", &data, json.Unmarshal)
 
-c.Get("test/demo1", "app_name")
-c.UnsafeGet("test/demo1", "app_name")
-c.GetString("test/demo1", "app_name")
+c.GetRaw("test/demo1", "app_name")
+c.UnsafeGetRaw("test/demo1", "app_name")
+c.GetRawString("test/demo1", "app_name")
 
 c.OnKeyChange("test/demo1", "app_name", func([]byte) error) {
     // do something

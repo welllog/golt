@@ -49,7 +49,7 @@ func initConfigure(t *testing.T) *Configure {
 		return etcd.NewAdvanced(config, logger, etcd.WithExistsEtcdClient(&c))
 	})
 
-	engine, err := FromFile("./config.yaml", nil)
+	engine, err := FromFile("./config.yaml")
 	testz.Nil(t, err)
 	return engine
 }

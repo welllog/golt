@@ -142,9 +142,21 @@ golt的config库提供了统一的配置管理，支持从文件、etcd加载配
         # 是否监听该key path变动来动态加载配置
         dynamic: true
 ```
+#### 从自定义etcd客户端加载配置
+```yaml
+  # 加载配置的源为自定义etcd客户端
+  - source: custom_etcd://
+    configs:
+      # 命名空间，决定了该配置从哪个etcd及其key path中读取
+      - namespace: test/demo4
+        # 当前etcd下的key path
+        path: /v1/test/demo4/
+        # 是否监听该key path变动来动态加载配置
+        dynamic: true
+```
 #### config使用概览
 ```
-c, err := FromFile("./config.yaml", nil) 
+c, err := FromFile("./config.yaml") 
 if err != nil {
     panic(err)
 }
@@ -159,9 +171,9 @@ c.YamlDecode("test/demo1", "log", &logConf)
 c.JsonDecode("test/demo4", "data", &data)
 c.Decode("test/demo4", "data", &data, json.Unmarshal)
 
-c.Get("test/demo1", "app_name")
-c.UnsafeGet("test/demo1", "app_name")
-c.GetString("test/demo1", "app_name")
+c.GetRaw("test/demo1", "app_name")
+c.UnsafeGetRaw("test/demo1", "app_name")
+c.GetRawString("test/demo1", "app_name")
 
 c.OnKeyChange("test/demo1", "app_name", func([]byte) error) {
     // do something
