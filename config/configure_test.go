@@ -49,7 +49,7 @@ func initConfigure(t *testing.T) *Configure {
 		return etcd.NewAdvanced(config, logger, etcd.WithExistsEtcdClient(&c))
 	})
 
-	engine, err := FromFile("./config.yaml")
+	engine, err := FromFile("./etc/config.yaml")
 	testz.Nil(t, err)
 	return engine
 }
@@ -57,20 +57,21 @@ func initConfigure(t *testing.T) *Configure {
 func TestConfigure_String(t *testing.T) {
 	engine := initConfigure(t)
 
-	name1, err := engine.String("test/demo1", "name")
+	ctx := context.Background()
+	name1, err := engine.String(ctx, "test/demo1", "name")
 	testz.Nil(t, err)
 
-	name2, err := engine.String("test/demo2", "name")
+	name2, err := engine.String(ctx, "test/demo2", "name")
 	testz.Nil(t, err)
 
 	testz.Equal(t, "demo1", name1)
 	testz.Equal(t, name1, name2)
 
-	str, err := engine.String("test/demo4", "foo")
+	str, err := engine.String(ctx, "test/demo4", "foo")
 	testz.Nil(t, err)
 	testz.Equal(t, "demo1", str)
 
-	str, err = engine.String("test/demo5", "baz")
+	str, err = engine.String(ctx, "test/demo5", "baz")
 	testz.Nil(t, err)
 	testz.Equal(t, "", str)
 }
@@ -78,23 +79,24 @@ func TestConfigure_String(t *testing.T) {
 func TestConfigure_String_Empty(t *testing.T) {
 	engine := initConfigure(t)
 
-	s1, err := engine.String("test/demo1", "test_title")
+	ctx := context.Background()
+	s1, err := engine.String(ctx, "test/demo1", "test_title")
 	testz.Nil(t, err)
 	testz.Equal(t, "", s1)
 
-	s2, err := engine.String("test/demo1", "no_value")
+	s2, err := engine.String(ctx, "test/demo1", "no_value")
 	testz.Nil(t, err)
 	testz.Equal(t, "", s2)
 
-	s3, err := engine.String("test/demo3", "no_value")
+	s3, err := engine.String(ctx, "test/demo3", "no_value")
 	testz.Nil(t, err)
 	testz.Equal(t, "", s3)
 
-	s4, err := engine.String("test/demo2", "test_name")
+	s4, err := engine.String(ctx, "test/demo2", "test_name")
 	testz.Nil(t, err)
 	testz.Equal(t, "", s4)
 
-	s5, err := engine.String("test/demo3", "test_name")
+	s5, err := engine.String(ctx, "test/demo3", "test_name")
 	testz.Nil(t, err)
 	testz.Equal(t, "", s5)
 }
@@ -102,11 +104,12 @@ func TestConfigure_String_Empty(t *testing.T) {
 func TestConfigure_Int64(t *testing.T) {
 	engine := initConfigure(t)
 
-	no, err := engine.Int64("test/demo1", "no")
+	ctx := context.Background()
+	no, err := engine.Int64(ctx, "test/demo1", "no")
 	testz.Nil(t, err)
 	testz.Equal(t, int64(2), no)
 
-	maxValue, err := engine.Int64("test/demo3", "max_value")
+	maxValue, err := engine.Int64(ctx, "test/demo3", "max_value")
 	testz.Nil(t, err)
 	testz.Equal(t, int64(120), maxValue)
 }
@@ -114,11 +117,12 @@ func TestConfigure_Int64(t *testing.T) {
 func TestConfigure_Float64(t *testing.T) {
 	engine := initConfigure(t)
 
-	testValue, err := engine.Float64("test/demo1", "test_value")
+	ctx := context.Background()
+	testValue, err := engine.Float64(ctx, "test/demo1", "test_value")
 	testz.Nil(t, err)
 	testz.Equal(t, 12.3, testValue)
 
-	testValue, err = engine.Float64("test/demo3", "test_value")
+	testValue, err = engine.Float64(ctx, "test/demo3", "test_value")
 	testz.Nil(t, err)
 	testz.Equal(t, 12.3, testValue)
 }
@@ -126,20 +130,22 @@ func TestConfigure_Float64(t *testing.T) {
 func TestConfigure_Bool(t *testing.T) {
 	engine := initConfigure(t)
 
-	b1, err := engine.Bool("test/demo1", "leader")
+	ctx := context.Background()
+	b1, err := engine.Bool(ctx, "test/demo1", "leader")
 	testz.Nil(t, err)
 	testz.Equal(t, true, b1)
 
-	b2, err := engine.Bool("test/demo2", "leader")
+	b2, err := engine.Bool(ctx, "test/demo2", "leader")
 	testz.Nil(t, err)
 	testz.Equal(t, b1, b2)
 }
 
 func TestConfigure_YamlDecode(t *testing.T) {
 	engine := initConfigure(t)
+	ctx := context.Background()
 
 	var a addr
-	err := engine.YamlDecode("test/demo1", "addr", &a)
+	err := engine.YamlDecode(ctx, "test/demo1", "addr", &a)
 	testz.Nil(t, err)
 
 	testz.Equal(t, "sichuan", a.Province)
@@ -149,24 +155,26 @@ func TestConfigure_YamlDecode(t *testing.T) {
 
 func TestConfigure_JsonDecode(t *testing.T) {
 	engine := initConfigure(t)
+	ctx := context.Background()
 
 	var w work
-	err := engine.JsonDecode("test/demo1", "work", &w)
+	err := engine.JsonDecode(ctx, "test/demo1", "work", &w)
 	testz.Nil(t, err)
 
 	testz.Equal(t, "engineer", w.Title)
 	testz.Equal(t, 10000, w.Salary)
 
 	var w1 work
-	err = engine.JsonDecode("test/demo5", "work", &w1)
+	err = engine.JsonDecode(ctx, "test/demo5", "work", &w1)
 	testz.Nil(t, err)
 
 	testz.Equal(t, "engineer", w1.Title)
 	testz.Equal(t, 10000, w1.Salary)
 }
 
-func TestConfigureDynamic(t *testing.T) {
-	f, err := os.OpenFile("test1.yaml", os.O_RDWR, 0666)
+func TestConfigureWatch(t *testing.T) {
+	ctx := context.Background()
+	f, err := os.OpenFile("./etc/test1.yaml", os.O_RDWR, 0666)
 	testz.Nil(t, err)
 	defer f.Close()
 
@@ -181,14 +189,14 @@ func TestConfigureDynamic(t *testing.T) {
 		return nil
 	})
 
-	name, err := engine.String("test/demo1", "name")
+	name, err := engine.String(ctx, "test/demo1", "name")
 	testz.Nil(t, err)
 	testz.Equal(t, "demo1", name)
 
 	_, _ = f.Seek(io.SeekStart, 0)
 	_, _ = f.Write(b)
 	time.Sleep(600 * time.Millisecond)
-	name, err = engine.String("test/demo1", "name")
+	name, err = engine.String(ctx, "test/demo1", "name")
 	testz.Nil(t, err)
 	testz.Equal(t, "demo1", name)
 
@@ -198,14 +206,14 @@ func TestConfigureDynamic(t *testing.T) {
 	_, err = f.Write(b2)
 	testz.Nil(t, err)
 	time.Sleep(600 * time.Millisecond)
-	name, err = engine.String("test/demo1", "name")
+	name, err = engine.String(ctx, "test/demo1", "name")
 	testz.Nil(t, err)
 	testz.Equal(t, "demo2", name)
 
 	_, _ = f.Seek(io.SeekStart, 0)
 	_, _ = f.Write(b)
 	time.Sleep(600 * time.Millisecond)
-	name, err = engine.String("test/demo1", "name")
+	name, err = engine.String(ctx, "test/demo1", "name")
 	testz.Nil(t, err)
 	testz.Equal(t, "demo1", name)
 

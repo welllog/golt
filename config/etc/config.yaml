@@ -65,7 +65,7 @@
   # etcd key is "/project/config/user/name", the value is "demo"
   # etcd key is "/project/config/user/no", the value is "1"
 
-  - source: file://
+  - source: file://etc/
     configs:
       # namespace, used to distinguish different configurations with the same key
       # multiple namespaces point to the same configuration path, separated by |

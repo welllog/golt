@@ -35,41 +35,41 @@ func NewWatcher(client *clientv3.Client) *Watcher {
 	}
 }
 
-func (e *Watcher) SetCommonPrefixMinLen(l int) *Watcher {
+func (w *Watcher) SetCommonPrefixMinLen(l int) *Watcher {
 	if l > 1 {
-		e.commonPrefixMinLen = l
+		w.commonPrefixMinLen = l
 	}
 
-	return e
+	return w
 }
 
-func (e *Watcher) SetLogger(logger contract.Logger) *Watcher {
-	e.logger = logger
-	return e
+func (w *Watcher) SetLogger(logger contract.Logger) *Watcher {
+	w.logger = logger
+	return w
 }
 
 // Attach not goroutine safe
-func (e *Watcher) Attach(observer Observer) {
+func (w *Watcher) Attach(observer Observer) {
 	prefix := observer.Prefix()
 	var hasCommonPrefix bool
-	for i, v := range e.prefixes {
-		cpx := commonPrefix(prefix, v, e.commonPrefixMinLen)
+	for i, v := range w.prefixes {
+		cpx := commonPrefix(prefix, v, w.commonPrefixMinLen)
 		if cpx != "" {
-			e.prefixes[i] = cpx
+			w.prefixes[i] = cpx
 			hasCommonPrefix = true
 			break
 		}
 	}
 
 	if !hasCommonPrefix {
-		e.prefixes = append(e.prefixes, prefix)
+		w.prefixes = append(w.prefixes, prefix)
 	}
-	e.observers = append(e.observers, observer)
+	w.observers = append(w.observers, observer)
 }
 
 // HasObserver not goroutine safe
-func (e *Watcher) HasObserver(prefix string) bool {
-	for _, v := range e.observers {
+func (w *Watcher) HasObserver(prefix string) bool {
+	for _, v := range w.observers {
 		if v.Prefix() == prefix {
 			return true
 		}
@@ -78,26 +78,26 @@ func (e *Watcher) HasObserver(prefix string) bool {
 }
 
 // Run should exec after Attach
-func (e *Watcher) Run(ctx context.Context) {
-	if !atomic.CompareAndSwapInt32(&e.state, 0, 1) {
+func (w *Watcher) Run(ctx context.Context) {
+	if !atomic.CompareAndSwapInt32(&w.state, 0, 1) {
 		return
 	}
 
-	for _, v := range e.prefixes {
+	for _, v := range w.prefixes {
 		prefix := v
 
-		e.wg.Add(1)
-		go e.watch(ctx, prefix)
+		w.wg.Add(1)
+		go w.watch(ctx, prefix)
 	}
 
-	e.wg.Wait()
+	w.wg.Wait()
 }
 
-func (e *Watcher) watch(ctx context.Context, prefix string) {
-	ch := e.client.Watch(ctx, prefix, clientv3.WithPrefix(), clientv3.WithPrevKV())
-	e.logger.Debugf("watch etcd key prefix: %s", prefix)
+func (w *Watcher) watch(ctx context.Context, prefix string) {
+	ch := w.client.Watch(ctx, prefix, clientv3.WithPrefix(), clientv3.WithPrevKV())
+	w.logger.Debugf("watch etcd key prefix: %s", prefix)
 
-	e.wg.Done()
+	w.wg.Done()
 
 	for ret := range ch {
 		for _, ev := range ret.Events {
@@ -106,14 +106,14 @@ func (e *Watcher) watch(ctx context.Context, prefix string) {
 			}
 
 			key := strz.UnsafeString(ev.Kv.Key)
-			e.logger.Debugf("key %s %s", key, ev.Type.String())
-			for _, obs := range e.observers {
+			w.logger.Debugf("key %s %s", key, ev.Type.String())
+			for _, obs := range w.observers {
 				if strings.HasPrefix(key, obs.Prefix()) {
-					e.logger.Debugf("key %s %s", key, obs.Prefix())
+					w.logger.Debugf("key %s %s", key, obs.Prefix())
 					func() {
 						defer func() {
 							if r := recover(); r != nil {
-								e.logger.Errorf("observer.Handle panic: %v", r)
+								w.logger.Errorf("observer.Handle panic: %v", r)
 							}
 						}()
 						obs.Handle(ev)

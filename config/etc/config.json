@@ -1,6 +1,6 @@
 [
   {
-    "source": "file://",
+    "source": "file://etc/",
     "configs": [
       {
         "namespace": "test/demo1 | test/demo2",

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -23,13 +24,13 @@ func ExampleAtomicStore() {
 		}))
 	})
 
-	engine, err := FromFile("./config.yaml")
+	engine, err := FromFile("./etc/config.yaml")
 	if err != nil {
 		panic(err)
 	}
 
 	var c workConfig
-	err = AtomicStore(engine, "test/demo1", "work", &c.work, json.Unmarshal)
+	err = AtomicStore(context.Background(), engine, "test/demo1", "work", &c.work, json.Unmarshal)
 	if err != nil {
 		panic(err)
 	}
@@ -47,13 +48,13 @@ func ExampleAtomicLoad() {
 		}))
 	})
 
-	engine, err := FromFile("./config.yaml")
+	engine, err := FromFile("./etc/config.yaml")
 	if err != nil {
 		panic(err)
 	}
 
 	var c workConfig
-	err = AtomicStore(engine, "test/demo1", "work", &c.work, json.Unmarshal)
+	err = AtomicStore(context.Background(), engine, "test/demo1", "work", &c.work, json.Unmarshal)
 	if err != nil {
 		panic(err)
 	}
