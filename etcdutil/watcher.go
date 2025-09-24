@@ -3,6 +3,7 @@ package etcdutil
 import (
 	"context"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/welllog/golib/strz"
@@ -19,17 +20,18 @@ type Observer interface {
 type Watcher struct {
 	client             *clientv3.Client
 	observers          []Observer
-	prefixs            []string
+	prefixes           []string
 	commonPrefixMinLen int
 	state              int32
 	logger             contract.Logger
+	wg                 sync.WaitGroup
 }
 
 func NewWatcher(client *clientv3.Client) *Watcher {
 	return &Watcher{
 		client:             client,
 		commonPrefixMinLen: 1,
-		logger:             olog.GetLogger(),
+		logger:             olog.DynamicLogger{},
 	}
 }
 
@@ -50,17 +52,17 @@ func (e *Watcher) SetLogger(logger contract.Logger) *Watcher {
 func (e *Watcher) Attach(observer Observer) {
 	prefix := observer.Prefix()
 	var hasCommonPrefix bool
-	for i, v := range e.prefixs {
+	for i, v := range e.prefixes {
 		cpx := commonPrefix(prefix, v, e.commonPrefixMinLen)
 		if cpx != "" {
-			e.prefixs[i] = cpx
+			e.prefixes[i] = cpx
 			hasCommonPrefix = true
 			break
 		}
 	}
 
 	if !hasCommonPrefix {
-		e.prefixs = append(e.prefixs, prefix)
+		e.prefixes = append(e.prefixes, prefix)
 	}
 	e.observers = append(e.observers, observer)
 }
@@ -81,30 +83,44 @@ func (e *Watcher) Run(ctx context.Context) {
 		return
 	}
 
-	chs := make([]clientv3.WatchChan, len(e.prefixs))
-	for i, v := range e.prefixs {
-		chs[i] = e.client.Watch(ctx, v, clientv3.WithPrefix())
-		e.logger.Debugf("watch etcd key prefix: %s", v)
+	for _, v := range e.prefixes {
+		prefix := v
+
+		e.wg.Add(1)
+		go e.watch(ctx, prefix)
 	}
 
-	for _, ch := range chs {
-		go func(wch clientv3.WatchChan) {
-			for ret := range wch {
-				for _, ev := range ret.Events {
-					if ev.Type != clientv3.EventTypePut && ev.Type != clientv3.EventTypeDelete {
-						continue
-					}
+	e.wg.Wait()
+}
 
-					key := strz.UnsafeString(ev.Kv.Key)
-					e.logger.Debugf("key %s %s", key, ev.Type.String())
-					for _, obs := range e.observers {
-						if strings.HasPrefix(key, obs.Prefix()) {
-							obs.Handle(ev)
-						}
-					}
+func (e *Watcher) watch(ctx context.Context, prefix string) {
+	ch := e.client.Watch(ctx, prefix, clientv3.WithPrefix(), clientv3.WithPrevKV())
+	e.logger.Debugf("watch etcd key prefix: %s", prefix)
+
+	e.wg.Done()
+
+	for ret := range ch {
+		for _, ev := range ret.Events {
+			if ev.Type != clientv3.EventTypePut && ev.Type != clientv3.EventTypeDelete {
+				continue
+			}
+
+			key := strz.UnsafeString(ev.Kv.Key)
+			e.logger.Debugf("key %s %s", key, ev.Type.String())
+			for _, obs := range e.observers {
+				if strings.HasPrefix(key, obs.Prefix()) {
+					e.logger.Debugf("key %s %s", key, obs.Prefix())
+					func() {
+						defer func() {
+							if r := recover(); r != nil {
+								e.logger.Errorf("observer.Handle panic: %v", r)
+							}
+						}()
+						obs.Handle(ev)
+					}()
 				}
 			}
-		}(ch)
+		}
 	}
 }
 

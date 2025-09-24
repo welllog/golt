@@ -39,7 +39,7 @@ func NewKv(prefix string, client *clientv3.Client) *Kv {
 		entries: make(map[string]*entry, 5),
 		hooks:   make(map[string][]func([]byte) error),
 		client:  client,
-		logger:  olog.GetLogger(),
+		logger:  olog.DynamicLogger{},
 	}
 	return &kv
 }
