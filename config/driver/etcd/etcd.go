@@ -23,6 +23,8 @@ var _ driver.Driver = (*etcd)(nil)
 
 type etcd struct {
 	client         *clientv3.Client
+	outerClient    bool
+	cancel         context.CancelFunc
 	namespace2node map[string]*etcdutil.Kv
 	watcher        *etcdutil.Watcher
 }
@@ -37,6 +39,7 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 		opt(&opts)
 	}
 
+	outerClient := true
 	if opts.etcdClient == nil {
 		if len(opts.etcdConfig.Endpoints) == 0 {
 			opts.etcdConfig.Endpoints = strings.Split(c.SourceAddr(), ",")
@@ -59,14 +62,18 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 			return nil, err
 		}
 		opts.etcdClient = client
+		outerClient = false
 	}
 
-	if opts.commonPrefixMinLen == 0 {
+	if opts.commonPrefixMinLen <= 0 {
 		opts.commonPrefixMinLen = 4
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	ed := etcd{
 		client:         opts.etcdClient,
+		outerClient:    outerClient,
+		cancel:         cancel,
 		namespace2node: make(map[string]*etcdutil.Kv, len(c.Configs)),
 	}
 
@@ -83,11 +90,13 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 			path2node[cfg.Path] = node
 
 			if opts.preload {
-				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-				err := node.Preload(ctx)
-				cancel()
+				opCtx, opCancel := context.WithTimeout(ctx, time.Minute)
+				err := node.Preload(opCtx)
+				opCancel()
 				if err != nil {
-					_ = opts.etcdClient.Close()
+					if !outerClient {
+						_ = opts.etcdClient.Close()
+					}
 					return nil, fmt.Errorf("preload failed: %w", err)
 				}
 			}
@@ -110,7 +119,7 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 
 	if len(watchPath) > 0 {
 		ed.watcher = watcher
-		watcher.Run(context.Background())
+		watcher.Run(ctx)
 	}
 
 	return &ed, nil
@@ -174,5 +183,8 @@ func (e *etcd) GetString(ctx context.Context, namespace, key string) (string, er
 }
 
 func (e *etcd) Close() {
-	_ = e.client.Close()
+	if !e.outerClient {
+		_ = e.client.Close()
+	}
+	e.cancel()
 }

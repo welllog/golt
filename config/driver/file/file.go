@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/welllog/golib/dsz"
 	"github.com/welllog/golib/mapz"
+	"github.com/welllog/golib/setz"
 	"github.com/welllog/golt/config/driver"
 	"github.com/welllog/golt/config/meta"
 	"github.com/welllog/golt/contract"
@@ -33,6 +33,7 @@ type file struct {
 	filepath2node  map[string]*fileNode
 	buf            map[string]*field
 	ch             chan string
+	quit           chan struct{}
 	logger         contract.Logger
 }
 
@@ -145,6 +146,7 @@ func (f *file) Close() {
 	if f.watcher != nil {
 		_ = f.watcher.Close()
 	}
+	close(f.quit)
 }
 
 func (f *file) loadToBuf(path string) error {
@@ -180,7 +182,7 @@ func (f *file) watch() error {
 	f.watcher = watcher
 	f.ch = make(chan string)
 
-	set := make(dsz.Set[string], len(f.filepath2node))
+	set := make(setz.Set[string], len(f.filepath2node))
 	for path, node := range f.filepath2node {
 		if node.watch {
 			dir := filepath.Dir(path)
@@ -214,6 +216,8 @@ func (f *file) dedup() {
 
 	for {
 		select {
+		case <-f.quit:
+			return
 		case err, ok := <-f.watcher.Errors:
 			if !ok { // Channel was closed (i.e. Watcher.Close() was called).
 				return
@@ -255,26 +259,29 @@ func (f *file) dedup() {
 
 func (f *file) listenAndRefresh() {
 	for {
-		path := <-f.ch
+		select {
+		case <-f.quit:
+			return
+		case path := <-f.ch:
+			node, ok := f.filepath2node[path]
+			if !ok {
+				continue
+			}
 
-		node, ok := f.filepath2node[path]
-		if !ok {
-			continue
+			f.logger.Debugf("file %s changed", path)
+
+			if err := f.loadToBuf(path); err != nil {
+				f.logger.Errorf("reload file %s failed: %v", path, err)
+				continue
+			}
+
+			f.mu.Lock()
+			node.CacheFrom(f.buf)
+			f.mu.Unlock()
+
+			f.mu.RLock()
+			node.ExecuteHook(f.buf, f.logger)
+			f.mu.RUnlock()
 		}
-
-		f.logger.Debugf("file %s changed", path)
-
-		if err := f.loadToBuf(path); err != nil {
-			// TODO log
-			continue
-		}
-
-		f.mu.Lock()
-		node.CacheFrom(f.buf)
-		f.mu.Unlock()
-
-		f.mu.RLock()
-		node.ExecuteHook(f.buf, f.logger)
-		f.mu.RUnlock()
 	}
 }
