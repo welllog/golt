@@ -3,10 +3,11 @@ package etcd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
-	"github.com/welllog/golib/dsz"
+	"github.com/welllog/golib/setz"
 	"github.com/welllog/golt/config/driver"
 	"github.com/welllog/golt/config/meta"
 	"github.com/welllog/golt/contract"
@@ -71,7 +72,7 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 
 	watcher := etcdutil.NewWatcher(opts.etcdClient).SetCommonPrefixMinLen(opts.commonPrefixMinLen).SetLogger(logger)
 	path2node := make(map[string]*etcdutil.Kv, len(c.Configs))
-	watchPath := make(dsz.Set[string], len(c.Configs))
+	watchPath := make(setz.Set[string], len(c.Configs))
 
 	for _, cfg := range c.Configs {
 		nps := cfg.Namespaces()
@@ -81,18 +82,18 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 			node = etcdutil.NewKv(cfg.Path, opts.etcdClient).SetLogger(logger)
 			path2node[cfg.Path] = node
 
-			if opts.preload || !cfg.Dynamic {
+			if opts.preload {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 				err := node.Preload(ctx)
 				cancel()
 				if err != nil {
 					_ = opts.etcdClient.Close()
-					return nil, err
+					return nil, fmt.Errorf("preload failed: %w", err)
 				}
 			}
 		}
 
-		if cfg.Dynamic {
+		if cfg.Watch {
 			if watchPath.Add(cfg.Path) {
 				watcher.Attach(node)
 			}
@@ -136,13 +137,13 @@ func (e *etcd) OnKeyChange(namespace, key string, hook func([]byte) error) bool 
 	return node.OnKeyChange(key, hook)
 }
 
-func (e *etcd) Get(namespace, key string) ([]byte, error) {
+func (e *etcd) Get(ctx context.Context, namespace, key string) ([]byte, error) {
 	node, ok := e.namespace2node[namespace]
 	if !ok {
 		return nil, driver.ErrNotFound
 	}
 
-	b, err := node.UnsafeGet(context.Background(), key)
+	b, err := node.UnsafeGet(ctx, key)
 	if err != nil {
 		if errors.Is(err, etcdutil.ErrNotFound) {
 			return nil, driver.ErrNotFound
@@ -154,13 +155,13 @@ func (e *etcd) Get(namespace, key string) ([]byte, error) {
 	return b, nil
 }
 
-func (e *etcd) GetString(namespace, key string) (string, error) {
+func (e *etcd) GetString(ctx context.Context, namespace, key string) (string, error) {
 	node, ok := e.namespace2node[namespace]
 	if !ok {
 		return "", driver.ErrNotFound
 	}
 
-	value, err := node.GetString(context.Background(), key)
+	value, err := node.GetString(ctx, key)
 	if err != nil {
 		if errors.Is(err, etcdutil.ErrNotFound) {
 			return "", driver.ErrNotFound

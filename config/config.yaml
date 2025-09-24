@@ -73,21 +73,21 @@
       - namespace: test/demo1 | test/demo2
         # config file path relative to root path
         path: test1.yaml
-        # dynamic load config, the value is true will watch the config change, default is false
-        dynamic: true
+        # the value is true will watch the config change, default is false
+        watch: true
       - namespace: test/demo3
         path: test2.json
-        dynamic: false
+        watch: false
   - source: etcd://127.0.0.1:2379
     configs:
       - namespace: test/demo4
         # etcd key path prefix
         path: /v1/test/demo4/
-        # dynamic load config, the value is true will watch the config change, default is false
-        dynamic: true
+        # the value is true will watch the config change, default is false
+        watch: true
       - namespace: test/demo5
         # etcd key path prefix
         path: /v1/test/demo5/
-        # dynamic load config, the value is true will watch the config change, default is false
-        dynamic: false
+        # the value is true will watch the config change, default is false
+        watch: false
 

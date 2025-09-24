@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -66,8 +67,8 @@ func (e *Configure) OnKeyChange(namespace, key string, hook func([]byte) error) 
 	return ok
 }
 
-func (e *Configure) GetRaw(namespace, key string) ([]byte, error) {
-	b, err := e.UnsafeGetRaw(namespace, key)
+func (e *Configure) GetRaw(ctx context.Context, namespace, key string) ([]byte, error) {
+	b, err := e.UnsafeGetRaw(ctx, namespace, key)
 	if err != nil {
 		return nil, err
 	}
@@ -75,26 +76,26 @@ func (e *Configure) GetRaw(namespace, key string) ([]byte, error) {
 	return append([]byte(nil), b...), nil
 }
 
-func (e *Configure) UnsafeGetRaw(namespace, key string) ([]byte, error) {
+func (e *Configure) UnsafeGetRaw(ctx context.Context, namespace, key string) ([]byte, error) {
 	d, ok := e.ds[namespace]
 	if !ok {
 		return nil, ErrNotFound
 	}
 
-	return d.Get(namespace, key)
+	return d.Get(ctx, namespace, key)
 }
 
-func (e *Configure) GetRawString(namespace, key string) (string, error) {
+func (e *Configure) GetRawString(ctx context.Context, namespace, key string) (string, error) {
 	d, ok := e.ds[namespace]
 	if !ok {
 		return "", ErrNotFound
 	}
 
-	return d.GetString(namespace, key)
+	return d.GetString(ctx, namespace, key)
 }
 
-func (e *Configure) String(namespace, key string) (string, error) {
-	s, err := e.GetRawString(namespace, key)
+func (e *Configure) String(ctx context.Context, namespace, key string) (string, error) {
+	s, err := e.GetRawString(ctx, namespace, key)
 	if err != nil {
 		return "", err
 	}
@@ -102,8 +103,8 @@ func (e *Configure) String(namespace, key string) (string, error) {
 	return unquote(s), nil
 }
 
-func (e *Configure) Int64(namespace, key string) (int64, error) {
-	s, err := e.String(namespace, key)
+func (e *Configure) Int64(ctx context.Context, namespace, key string) (int64, error) {
+	s, err := e.String(ctx, namespace, key)
 	if err != nil {
 		return 0, err
 	}
@@ -111,8 +112,8 @@ func (e *Configure) Int64(namespace, key string) (int64, error) {
 	return strconv.ParseInt(s, 10, 64)
 }
 
-func (e *Configure) Int(namespace, key string) (int, error) {
-	s, err := e.String(namespace, key)
+func (e *Configure) Int(ctx context.Context, namespace, key string) (int, error) {
+	s, err := e.String(ctx, namespace, key)
 	if err != nil {
 		return 0, err
 	}
@@ -120,8 +121,8 @@ func (e *Configure) Int(namespace, key string) (int, error) {
 	return strconv.Atoi(s)
 }
 
-func (e *Configure) Float64(namespace, key string) (float64, error) {
-	s, err := e.String(namespace, key)
+func (e *Configure) Float64(ctx context.Context, namespace, key string) (float64, error) {
+	s, err := e.String(ctx, namespace, key)
 	if err != nil {
 		return 0, err
 	}
@@ -129,8 +130,8 @@ func (e *Configure) Float64(namespace, key string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
 }
 
-func (e *Configure) Bool(namespace, key string) (bool, error) {
-	s, err := e.String(namespace, key)
+func (e *Configure) Bool(ctx context.Context, namespace, key string) (bool, error) {
+	s, err := e.String(ctx, namespace, key)
 	if err != nil {
 		return false, err
 	}
@@ -138,21 +139,21 @@ func (e *Configure) Bool(namespace, key string) (bool, error) {
 	return strconv.ParseBool(s)
 }
 
-func (e *Configure) YamlDecode(namespace, key string, value any) error {
-	return e.Decode(namespace, key, value, yaml.Unmarshal)
+func (e *Configure) YamlDecode(ctx context.Context, namespace, key string, value any) error {
+	return e.Decode(ctx, namespace, key, value, yaml.Unmarshal)
 }
 
-func (e *Configure) JsonDecode(namespace, key string, value any) error {
-	return e.Decode(namespace, key, value, json.Unmarshal)
+func (e *Configure) JsonDecode(ctx context.Context, namespace, key string, value any) error {
+	return e.Decode(ctx, namespace, key, value, json.Unmarshal)
 }
 
-func (e *Configure) Decode(namespace, key string, value any, fn UnmarshalFunc) error {
+func (e *Configure) Decode(ctx context.Context, namespace, key string, value any, fn UnmarshalFunc) error {
 	d, ok := e.ds[namespace]
 	if !ok {
 		return ErrNotFound
 	}
 
-	b, err := d.Get(namespace, key)
+	b, err := d.Get(ctx, namespace, key)
 	if err != nil {
 		return err
 	}

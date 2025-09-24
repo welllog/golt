@@ -1,13 +1,14 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"sync/atomic"
 	"unsafe"
 )
 
-func AtomicStore(cfg *Configure, namespace, key string, dst any, unmarshalFunc func([]byte, any) error) error {
+func AtomicStore(ctx context.Context, cfg *Configure, namespace, key string, dst any, unmarshalFunc func([]byte, any) error) error {
 	val := reflect.ValueOf(dst)
 	if val.Kind() != reflect.Ptr {
 		return errors.New("dst must be a pointer")
@@ -19,7 +20,7 @@ func AtomicStore(cfg *Configure, namespace, key string, dst any, unmarshalFunc f
 	}
 
 	storeVal := reflect.New(elem.Type())
-	err := cfg.Decode(namespace, key, storeVal.Interface(), unmarshalFunc)
+	err := cfg.Decode(ctx, namespace, key, storeVal.Interface(), unmarshalFunc)
 	if err != nil {
 		return err
 	}

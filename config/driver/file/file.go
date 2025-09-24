@@ -1,6 +1,7 @@
 package file
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,8 +63,8 @@ func New(c meta.Config, logger contract.Logger) (driver.Driver, error) {
 			fd.filepath2node[path] = node
 		}
 
-		if cfg.Dynamic {
-			node.dynamic = true
+		if cfg.Watch {
+			node.watch = true
 			watch = true
 		}
 
@@ -106,7 +107,7 @@ func (f *file) OnKeyChange(namespace, key string, hook func([]byte) error) bool 
 	return node.OnKeyChange(key, hook)
 }
 
-func (f *file) Get(namespace, key string) ([]byte, error) {
+func (f *file) Get(ctx context.Context, namespace, key string) ([]byte, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
@@ -123,7 +124,7 @@ func (f *file) Get(namespace, key string) ([]byte, error) {
 	return b, nil
 }
 
-func (f *file) GetString(namespace, key string) (string, error) {
+func (f *file) GetString(ctx context.Context, namespace, key string) (string, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
@@ -181,7 +182,7 @@ func (f *file) watch() error {
 
 	set := make(dsz.Set[string], len(f.filepath2node))
 	for path, node := range f.filepath2node {
-		if node.dynamic {
+		if node.watch {
 			dir := filepath.Dir(path)
 			if set.Add(dir) {
 				f.logger.Debugf("watch path: %s", dir)
@@ -233,7 +234,7 @@ func (f *file) dedup() {
 				continue
 			}
 
-			if !node.dynamic {
+			if !node.watch {
 				continue
 			}
 
