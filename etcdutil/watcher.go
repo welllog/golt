@@ -138,6 +138,10 @@ func commonPrefix(s1, s2 string, commonSize int) string {
 		}
 	}
 
+	if prefix == s1 || prefix == s2 {
+		return prefix
+	}
+
 	if len(prefix) < commonSize {
 		return ""
 	}
