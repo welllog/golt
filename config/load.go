@@ -15,24 +15,29 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type FieldLoadFuncs map[unsafe.Pointer]func() error
+type FieldLazyLoadMap map[unsafe.Pointer]func() error
 
-func (c *Configure) InitAndPreload(dst any) error {
-	v := reflect.ValueOf(dst)
-	if v.Type().Kind() != reflect.Ptr {
-		return fmt.Errorf("dst must be a pointer to struct")
+// InitAndPreload parses the struct tags of the fields in the struct pointed to by dst,
+// preloads the configuration values, and returns a map of lazy load functions for fields that are marked as lazy.
+// The dst parameter must be a pointer to a struct.
+// The struct fields can be either exported or unexported.
+// For exported fields, the configuration value is directly set to the field.
+// For unexported fields, if the field is not a pointer, the configuration value is directly set to the field using unsafe.
+// For unexported pointer fields, if the lazy option is not set, the configuration value is loaded and set to the field using unsafe.
+// If the lazy option is set for an unexported pointer field, a lazy load function is returned in the map.
+// If the watch option is set for an unexported pointer field, a callback function is registered to update the field when the configuration changes.
+func (c *Configure) InitAndPreload(dst any, fieldLoadTimeout time.Duration) (FieldLazyLoadMap, error) {
+	begin := time.Now()
+
+	v, err := validateDst(dst)
+	if err != nil {
+		return nil, err
 	}
 
-	v = v.Elem()
-	t := v.Type()
-	if t.Kind() != reflect.Struct {
-		return fmt.Errorf("dst must be a pointer to struct")
-	}
-
-	funcs := FieldLoadFuncs{}
+	funcs := FieldLazyLoadMap{}
 
 	for i := 0; i < v.NumField(); i++ {
-		field := t.Field(i)
+		field := v.Type().Field(i)
 		tag := field.Tag.Get("config")
 		if tag == "" {
 			continue
@@ -40,115 +45,44 @@ func (c *Configure) InitAndPreload(dst any) error {
 
 		ct, err := parseConfigTag(tag)
 		if err != nil {
-			return fmt.Errorf("field %s tag parse: %w", field.Name, err)
+			return nil, fmt.Errorf("field %s tag parse: %w", field.Name, err)
 		}
 
-		ft := field.Type
-		ftKind := ft.Kind()
-		isExported := field.IsExported()
-
-		if isExported {
-			if ct.Lazy {
-				c.logger.Warnf("Field %s is exported, lazy option is ignored", field.Name)
-				ct.Lazy = false
-			}
-			if ct.Watch {
-				c.logger.Warnf("Field %s is exported, watch option is ignored", field.Name)
-				ct.Watch = false
-			}
-		} else if ftKind != reflect.Ptr {
-			if ct.Lazy {
-				c.logger.Warnf("Field %s is not a pointer, lazy option is ignored", field.Name)
-				ct.Lazy = false
-			}
-			if ct.Watch {
-				c.logger.Warnf("Field %s is not a pointer, watch option is ignored", field.Name)
-				ct.Watch = false
-			}
-		}
-
-		if isExported {
-			loadCtx, loadCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if ftKind == reflect.Ptr {
-				rft := ft.Elem()
-				fv := reflect.New(rft)
-				err = c.Decode(loadCtx, ct.Namespace, ct.Key, fv.Interface(), formatter{f: ct.Format}.Decode)
-				loadCancel()
-				if err != nil {
-					return fmt.Errorf("field %s preload failed: %w", field.Name, err)
-				}
-
-				*(*unsafe.Pointer)(v.Field(i).Addr().UnsafePointer()) = unsafe.Pointer(fv.Elem().UnsafeAddr())
-
-				continue
-			}
-
-			err = c.Decode(loadCtx, ct.Namespace, ct.Key, v.Field(i).Addr().Interface(), formatter{f: ct.Format}.Decode)
-			loadCancel()
+		if field.IsExported() {
+			err = c.loadExportedField(field, v.Field(i), ct, fieldLoadTimeout)
 			if err != nil {
-				return fmt.Errorf("field %s preload failed: %w", field.Name, err)
+				return nil, err
 			}
 			continue
 		}
 
-		if ftKind != reflect.Ptr {
-			fdst := reflect.NewAt(ft, unsafe.Pointer(v.Field(i).UnsafeAddr())).Interface()
-			loadCtx, loadCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			err = c.Decode(loadCtx, ct.Namespace, ct.Key, fdst, formatter{f: ct.Format}.Decode)
-			loadCancel()
+		if field.Type.Kind() != reflect.Ptr {
+			err = c.loadUnexportedNotPtrField(field, v.Field(i), ct, fieldLoadTimeout)
 			if err != nil {
-				return fmt.Errorf("field %s preload failed: %w", field.Name, err)
+				return nil, err
 			}
 			continue
 		}
 
-		rft := ft.Elem()
-		fieldPtr := v.Field(i).Addr().UnsafePointer()
-		if ct.Watch {
-			callbackOk := c.OnKeyChange(ct.Namespace, ct.Key, func(b []byte) error {
-				fv := reflect.New(rft)
-				err = formatter{f: ct.Format}.Decode(b, fv.Interface())
-				if err != nil {
-					return err
-				}
-
-				atomic.StorePointer((*unsafe.Pointer)(fieldPtr), unsafe.Pointer(fv.Elem().UnsafeAddr()))
-				return nil
-			})
-
-			if !callbackOk {
-				return fmt.Errorf("key: %s %s not watchable but %s is watched", ct.Namespace, ct.Key, field.Name)
-			}
-		}
-
-		loadFunc := func() error {
-			loadCtx, loadCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			fv := reflect.New(rft)
-			err = c.Decode(loadCtx, ct.Namespace, ct.Key, fv.Interface(), formatter{f: ct.Format}.Decode)
-			loadCancel()
-			if err != nil {
-				return err
-			}
-
-			atomic.StorePointer((*unsafe.Pointer)(fieldPtr), unsafe.Pointer(fv.Elem().UnsafeAddr()))
-			return nil
-		}
-
-		if ct.Lazy {
-			funcs[fieldPtr] = loadFunc
-			continue
-		}
-
-		err = loadFunc()
+		err = c.handleLazyOrWatchedField(field, v.Field(i), ct, funcs, fieldLoadTimeout)
 		if err != nil {
-			return fmt.Errorf("field %s preload failed: %w", field.Name, err)
+			return nil, err
 		}
 	}
 
-	return nil
+	c.logger.Debugf("InitAndPreload took %d ms", time.Since(begin).Milliseconds())
+	return funcs, nil
 }
 
-func (c *Configure) TryLoad(fieldPtr unsafe.Pointer, funcs FieldLoadFuncs) (unsafe.Pointer, error) {
+// TryLoad attempts to load the configuration value for the field pointed to by fieldPtr.
+// The fieldPtr must be a pointer to an unsafe.Pointer that points to the actual field, and the field must be of pointer type.
+// fieldPtr like this: type User struct { addr *Addr `config:"..."` } -> unsafe.Pointer(&user.addr)
+//
+// If the field is already loaded (i.e., not nil), it returns the current value.
+// If the field is not loaded and a corresponding load function exists in funcs, it invokes the load function to load the value.
+// After invoking the load function, it checks again if the field is loaded and returns the value if successful.
+// If no load function exists or loading fails, it returns an error.
+func (c *Configure) TryLoad(fieldPtr unsafe.Pointer, funcs FieldLazyLoadMap) (unsafe.Pointer, error) {
 	ptr := atomic.LoadPointer((*unsafe.Pointer)(fieldPtr))
 	if ptr != nil {
 		return ptr, nil
@@ -169,6 +103,105 @@ func (c *Configure) TryLoad(fieldPtr unsafe.Pointer, funcs FieldLoadFuncs) (unsa
 		return nil, driver.ErrNotFound
 	}
 	return ptr, nil
+}
+
+func (c *Configure) loadExportedField(field reflect.StructField, fieldValue reflect.Value, ct configTag, loadTimeout time.Duration) error {
+	if ct.Lazy || ct.Watch {
+		c.logger.Warnf("Field %s is exported, lazy/watch options are ignored", field.Name)
+	}
+
+	loadCtx, loadCancel := context.WithTimeout(context.Background(), loadTimeout)
+	if field.Type.Kind() == reflect.Ptr {
+		ptrValue := reflect.New(field.Type.Elem())
+		err := c.Decode(loadCtx, ct.Namespace, ct.Key, ptrValue.Interface(), formatter{f: ct.Format}.Decode)
+		loadCancel()
+		if err != nil {
+			return fmt.Errorf("field %s preload failed: %w", field.Name, err)
+		}
+		fieldValue.Set(ptrValue)
+		return nil
+	}
+
+	err := c.Decode(loadCtx, ct.Namespace, ct.Key, fieldValue.Addr().Interface(), formatter{f: ct.Format}.Decode)
+	loadCancel()
+	if err != nil {
+		return fmt.Errorf("field %s preload failed: %w", field.Name, err)
+	}
+	return nil
+}
+
+func (c *Configure) loadUnexportedNotPtrField(field reflect.StructField, fieldValue reflect.Value, ct configTag, loadTimeout time.Duration) error {
+	if ct.Lazy || ct.Watch {
+		c.logger.Warnf("Field %s is not a pointer, lazy/watch options are ignored", field.Name)
+	}
+
+	dst := reflect.NewAt(field.Type, unsafe.Pointer(fieldValue.UnsafeAddr())).Interface()
+	loadCtx, loadCancel := context.WithTimeout(context.Background(), loadTimeout)
+	err := c.Decode(loadCtx, ct.Namespace, ct.Key, dst, formatter{f: ct.Format}.Decode)
+	loadCancel()
+	if err != nil {
+		return fmt.Errorf("field %s preload failed: %w", field.Name, err)
+	}
+	return nil
+}
+
+func (c *Configure) handleLazyOrWatchedField(field reflect.StructField, fieldValue reflect.Value, ct configTag, funcs FieldLazyLoadMap, loadTimeout time.Duration) error {
+	fieldPtr := fieldValue.Addr().UnsafePointer()
+	fieldType := field.Type.Elem()
+	if ct.Watch {
+		callbackOk := c.OnKeyChange(ct.Namespace, ct.Key, func(b []byte) error {
+			ptrValue := reflect.New(fieldType)
+			err := formatter{f: ct.Format}.Decode(b, ptrValue.Interface())
+			if err != nil {
+				return err
+			}
+
+			atomic.StorePointer((*unsafe.Pointer)(fieldPtr), ptrValue.UnsafePointer())
+			return nil
+		})
+
+		if !callbackOk {
+			return fmt.Errorf("key: %s %s not watchable but %s is watched", ct.Namespace, ct.Key, field.Name)
+		}
+	}
+
+	loadFunc := func() error {
+		loadCtx, loadCancel := context.WithTimeout(context.Background(), loadTimeout)
+		ptrValue := reflect.New(fieldType)
+		err := c.Decode(loadCtx, ct.Namespace, ct.Key, ptrValue.Interface(), formatter{f: ct.Format}.Decode)
+		loadCancel()
+		if err != nil {
+			return err
+		}
+
+		atomic.StorePointer((*unsafe.Pointer)(fieldPtr), ptrValue.UnsafePointer())
+		return nil
+	}
+
+	if ct.Lazy {
+		funcs[fieldPtr] = loadFunc
+		return nil
+	}
+
+	err := loadFunc()
+	if err != nil {
+		return fmt.Errorf("field %s preload failed: %w", field.Name, err)
+	}
+	return nil
+}
+
+func validateDst(dst any) (reflect.Value, error) {
+	v := reflect.ValueOf(dst)
+	if v.Kind() != reflect.Ptr {
+		return reflect.Value{}, fmt.Errorf("dst must be a pointer to struct")
+	}
+
+	v = v.Elem()
+	if v.Kind() != reflect.Struct {
+		return reflect.Value{}, fmt.Errorf("dst must be a pointer to struct")
+	}
+
+	return v, nil
 }
 
 type configTag struct {
@@ -216,7 +249,7 @@ func parseConfigTag(tag string) (configTag, error) {
 	}
 
 	if ct.Key == "" || ct.Namespace == "" {
-		return ct, fmt.Errorf("config tag must have key and namespace")
+		return ct, fmt.Errorf("config tag must have key and namespace, tag: %s", tag)
 	}
 
 	return ct, nil
