@@ -111,7 +111,7 @@ func (c *Configure) loadExportedField(field reflect.StructField, fieldValue refl
 	loadCtx, loadCancel := context.WithTimeout(context.Background(), loadTimeout)
 	if field.Type.Kind() == reflect.Ptr {
 		ptrValue := reflect.New(field.Type.Elem())
-		err := c.Decode(loadCtx, ct.Namespace, ct.Key, ptrValue.Interface(), formatter{f: ct.Format}.Decode)
+		err := c.Decode(loadCtx, ct.Namespace, ct.Key, ptrValue.Interface(), driver.GetDecoderOrDefault(ct.Format))
 		loadCancel()
 		if err != nil {
 			return fmt.Errorf("field %s preload failed: %w", field.Name, err)
@@ -120,7 +120,7 @@ func (c *Configure) loadExportedField(field reflect.StructField, fieldValue refl
 		return nil
 	}
 
-	err := c.Decode(loadCtx, ct.Namespace, ct.Key, fieldValue.Addr().Interface(), formatter{f: ct.Format}.Decode)
+	err := c.Decode(loadCtx, ct.Namespace, ct.Key, fieldValue.Addr().Interface(), driver.GetDecoderOrDefault(ct.Format))
 	loadCancel()
 	if err != nil {
 		return fmt.Errorf("field %s preload failed: %w", field.Name, err)
@@ -135,7 +135,7 @@ func (c *Configure) loadUnexportedNotPtrField(field reflect.StructField, fieldVa
 
 	dst := reflect.NewAt(field.Type, unsafe.Pointer(fieldValue.UnsafeAddr())).Interface()
 	loadCtx, loadCancel := context.WithTimeout(context.Background(), loadTimeout)
-	err := c.Decode(loadCtx, ct.Namespace, ct.Key, dst, formatter{f: ct.Format}.Decode)
+	err := c.Decode(loadCtx, ct.Namespace, ct.Key, dst, driver.GetDecoderOrDefault(ct.Format))
 	loadCancel()
 	if err != nil {
 		return fmt.Errorf("field %s preload failed: %w", field.Name, err)
@@ -149,7 +149,8 @@ func (c *Configure) handleLazyOrWatchedField(field reflect.StructField, fieldVal
 	if ct.Watch {
 		callbackOk := c.OnKeyChange(ct.Namespace, ct.Key, func(b []byte) error {
 			ptrValue := reflect.New(fieldType)
-			err := formatter{f: ct.Format}.Decode(b, ptrValue.Interface())
+			fn := driver.GetDecoderOrDefault(ct.Format)
+			err := fn(b, ptrValue.Interface())
 			if err != nil {
 				return err
 			}
@@ -166,7 +167,7 @@ func (c *Configure) handleLazyOrWatchedField(field reflect.StructField, fieldVal
 	loadFunc := func() error {
 		loadCtx, loadCancel := context.WithTimeout(context.Background(), loadTimeout)
 		ptrValue := reflect.New(fieldType)
-		err := c.Decode(loadCtx, ct.Namespace, ct.Key, ptrValue.Interface(), formatter{f: ct.Format}.Decode)
+		err := c.Decode(loadCtx, ct.Namespace, ct.Key, ptrValue.Interface(), driver.GetDecoderOrDefault(ct.Format))
 		loadCancel()
 		if err != nil {
 			return err

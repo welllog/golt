@@ -23,8 +23,6 @@ type Configure struct {
 	logger contract.Logger
 }
 
-type UnmarshalFunc func([]byte, any) error
-
 func newConfigure(cfs []meta.Config, logger contract.Logger) (*Configure, error) {
 	cfg := Configure{
 		ds:     make(map[string]driver.Driver, len(cfs)*2),
@@ -147,7 +145,7 @@ func (c *Configure) JsonDecode(ctx context.Context, namespace, key string, value
 	return c.Decode(ctx, namespace, key, value, json.Unmarshal)
 }
 
-func (c *Configure) Decode(ctx context.Context, namespace, key string, value any, fn UnmarshalFunc) error {
+func (c *Configure) Decode(ctx context.Context, namespace, key string, value any, fn driver.Decoder) error {
 	d, ok := c.ds[namespace]
 	if !ok {
 		return ErrNotFound

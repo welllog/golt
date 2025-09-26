@@ -8,8 +8,10 @@ import (
 type Option func(*configOptions)
 
 type configOptions struct {
-	logger  contract.Logger
-	etcdCli *clientv3.Client
+	logger                      contract.Logger
+	etcdCli                     *clientv3.Client
+	etcdWatchCommonPrefixMinLen int
+	etcdPreload                 bool
 }
 
 func WithLogger(logger contract.Logger) Option {
@@ -21,5 +23,17 @@ func WithLogger(logger contract.Logger) Option {
 func WithCustomEtcdClient(client *clientv3.Client) Option {
 	return func(opts *configOptions) {
 		opts.etcdCli = client
+	}
+}
+
+func WithEtcdWatchCommonPrefixMinLen(length int) Option {
+	return func(opts *configOptions) {
+		opts.etcdWatchCommonPrefixMinLen = length
+	}
+}
+
+func WithEtcdPreload() Option {
+	return func(opts *configOptions) {
+		opts.etcdPreload = true
 	}
 }

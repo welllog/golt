@@ -2,12 +2,11 @@ package file
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,7 +16,6 @@ import (
 	"github.com/welllog/golt/config/driver"
 	"github.com/welllog/golt/config/meta"
 	"github.com/welllog/golt/contract"
-	"gopkg.in/yaml.v3"
 )
 
 var _ driver.Driver = (*file)(nil)
@@ -43,6 +41,7 @@ func New(c meta.Config, logger contract.Logger) (driver.Driver, error) {
 		filepath2node:  make(map[string]*fileNode, len(c.Configs)),
 		buf:            make(map[string]*field),
 		logger:         logger,
+		quit:           make(chan struct{}),
 	}
 
 	root := c.SourceAddr()
@@ -146,7 +145,11 @@ func (f *file) Close() {
 	if f.watcher != nil {
 		_ = f.watcher.Close()
 	}
-	close(f.quit)
+	select {
+	case <-f.quit:
+	default:
+		close(f.quit)
+	}
 }
 
 func (f *file) loadToBuf(path string) error {
@@ -154,16 +157,11 @@ func (f *file) loadToBuf(path string) error {
 		delete(f.buf, k)
 	}
 
-	var fn func([]byte, any) error
-
-	ext := filepath.Ext(path)
-	switch ext {
-	case ".json":
-		fn = json.Unmarshal
-	case ".yaml":
-		fn = yaml.Unmarshal
-	default:
-		return errors.New("unsupported config file format: " + ext)
+	ext := strings.TrimPrefix(filepath.Ext(path), ".")
+	fn, ok := driver.GetDecoder(ext)
+	if !ok {
+		return fmt.Errorf("unsupported config file format: %s, "+
+			"you can register custom format decoder by driver.RegisterDecoder", ext)
 	}
 
 	b, err := os.ReadFile(path)
@@ -245,7 +243,7 @@ func (f *file) dedup() {
 			t, ok := path2timers.Get(e.Name)
 			// No timer yet, so create one.
 			if !ok {
-				t = time.AfterFunc(math.MaxInt64, func() { eventFunc(e.Name) })
+				t = time.AfterFunc(time.Minute, func() { eventFunc(e.Name) })
 				t.Stop()
 
 				path2timers.Set(e.Name, t)

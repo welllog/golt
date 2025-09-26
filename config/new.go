@@ -19,8 +19,10 @@ import (
 
 func NewConfigure(cfs []meta.Config, options ...Option) (*Configure, error) {
 	opts := configOptions{
-		logger:  nil,
-		etcdCli: nil,
+		logger:                      nil,
+		etcdCli:                     nil,
+		etcdWatchCommonPrefixMinLen: 0,
+		etcdPreload:                 false,
 	}
 	for _, opt := range options {
 		opt(&opts)
@@ -34,9 +36,24 @@ func NewConfigure(cfs []meta.Config, options ...Option) (*Configure, error) {
 		opts.logger = logger
 	}
 
+	etcdOpts := make([]etcd.Option, 0, 3)
+	if opts.etcdWatchCommonPrefixMinLen != 0 {
+		etcdOpts = append(etcdOpts, etcd.WithCommonPrefixMinLen(opts.etcdWatchCommonPrefixMinLen))
+	}
+	if opts.etcdPreload {
+		etcdOpts = append(etcdOpts, etcd.WithPreload())
+	}
+
 	if opts.etcdCli != nil {
+		etcdOpts2 := append(etcdOpts, etcd.WithExistsEtcdClient(opts.etcdCli))
 		driver.RegisterDriver("custom_etcd", func(c meta.Config, l contract.Logger) (driver.Driver, error) {
-			return etcd.NewAdvanced(c, l, etcd.WithExistsEtcdClient(opts.etcdCli))
+			return etcd.NewAdvanced(c, l, etcdOpts2...)
+		})
+	}
+
+	if len(etcdOpts) > 0 {
+		driver.RegisterDriver("etcd", func(c meta.Config, l contract.Logger) (driver.Driver, error) {
+			return etcd.NewAdvanced(c, l, etcdOpts...)
 		})
 	}
 
@@ -47,9 +64,10 @@ func FromFile(file string, options ...Option) (*Configure, error) {
 	var cs []meta.Config
 
 	ext := strings.TrimPrefix(filepath.Ext(file), ".")
-	fn, ok := formatterMap[ext]
+	fn, ok := driver.GetDecoder(ext)
 	if !ok {
-		return nil, errors.New("unsupported config file format")
+		return nil, fmt.Errorf("unsupported config file format: %s, "+
+			"you can register custom format decoder by driver.RegisterDecoder", ext)
 	}
 
 	b, err := os.ReadFile(file)
@@ -64,7 +82,7 @@ func FromFile(file string, options ...Option) (*Configure, error) {
 	return NewConfigure(cs, options...)
 }
 
-func FromEtcd(cli *clientv3.Client, metaConfigKey string, fn UnmarshalFunc, options ...Option) (*Configure, error) {
+func FromEtcd(cli *clientv3.Client, metaConfigKey string, fn driver.Decoder, options ...Option) (*Configure, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
