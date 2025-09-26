@@ -222,7 +222,7 @@ func parseConfigTag(tag string) (configTag, error) {
 
 		i := strings.Index(kv, ":")
 		if i <= 0 {
-			return ct, fmt.Errorf("invalid config tag")
+			return ct, fmt.Errorf("invalid config tag: %s", tag)
 		}
 		key := strings.TrimSpace(kv[:i])
 		value := strings.TrimSpace(kv[i+1:])
