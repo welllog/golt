@@ -128,7 +128,7 @@ etcd, supports dynamic loading of configuration, and supports configuration upda
         # The file path is the path of the configuration file.
         path: test1.yaml
         # Whether to monitor the changes of the file to dynamically load the configuration
-        dynamic: true
+        watch: true
 ```
 
 #### Load configuration from etcd
@@ -141,7 +141,7 @@ etcd, supports dynamic loading of configuration, and supports configuration upda
         # The key path under the current etcd
         path: /v1/test/demo4/
         # Whether to monitor the changes of the key path to dynamically load the configuration
-        dynamic: true
+        watch: true
 ```
 #### Load configuration from custom etcd
 ```yaml
@@ -153,7 +153,7 @@ etcd, supports dynamic loading of configuration, and supports configuration upda
         # The key path under the current etcd
         path: /v1/test/demo4/
         # Whether to monitor the changes of the key path to dynamically load the configuration
-        dynamic: true
+        watch: true
 ```
 
 #### config usage
@@ -164,18 +164,19 @@ if err != nil {
 }
 defer c.Close()
 
-c.String("test/demo1", "app_name")
-c.Int64("test/demo2", "retry")
-c.Int("test/demo2", "retry")
-c.Float64("test/demo4", "rate")
-c.Bool("test/demo4", "enable")
-c.YamlDecode("test/demo1", "log", &logConf)
-c.JsonDecode("test/demo4", "data", &data)
-c.Decode("test/demo4", "data", &data, json.Unmarshal)
+ctx := context.Background()
+c.String(ctx, "test/demo1", "app_name")
+c.Int64(ctx, "test/demo2", "retry")
+c.Int(ctx, "test/demo2", "retry")
+c.Float64(ctx, "test/demo4", "rate")
+c.Bool(ctx, "test/demo4", "enable")
+c.YamlDecode(ctx, "test/demo1", "log", &logConf)
+c.JsonDecode(ctx, "test/demo4", "data", &data)
+c.Decode(ctx, "test/demo4", "data", &data, json.Unmarshal)
 
-c.GetRaw("test/demo1", "app_name")
-c.UnsafeGetRaw("test/demo1", "app_name")
-c.GetRawString("test/demo1", "app_name")
+c.GetRaw(ctx, "test/demo1", "app_name")
+c.UnsafeGetRaw(ctx, "test/demo1", "app_name")
+c.GetRawString(ctx, "test/demo1", "app_name")
 
 c.OnKeyChange("test/demo1", "app_name", func([]byte) error) {
     // do something

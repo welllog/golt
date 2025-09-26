@@ -128,7 +128,7 @@ golt的config库提供了统一的配置管理，支持从文件、etcd加载配
         # 命名空间指向的文件
         path: test1.yaml
         # 是否监听该文件变动来动态加载配置
-        dynamic: true
+        watch: true
 ```
 #### 从etcd加载配置
 ```yaml
@@ -140,7 +140,7 @@ golt的config库提供了统一的配置管理，支持从文件、etcd加载配
         # 当前etcd下的key path
         path: /v1/test/demo4/
         # 是否监听该key path变动来动态加载配置
-        dynamic: true
+        watch: true
 ```
 #### 从自定义etcd客户端加载配置
 ```yaml
@@ -152,7 +152,7 @@ golt的config库提供了统一的配置管理，支持从文件、etcd加载配
         # 当前etcd下的key path
         path: /v1/test/demo4/
         # 是否监听该key path变动来动态加载配置
-        dynamic: true
+        watch: true
 ```
 #### config使用概览
 ```
@@ -162,18 +162,19 @@ if err != nil {
 }
 defer c.Close()
 
-c.String("test/demo1", "app_name")
-c.Int64("test/demo2", "retry")
-c.Int("test/demo2", "retry")
-c.Float64("test/demo4", "rate")
-c.Bool("test/demo4", "enable")
-c.YamlDecode("test/demo1", "log", &logConf)
-c.JsonDecode("test/demo4", "data", &data)
-c.Decode("test/demo4", "data", &data, json.Unmarshal)
+ctx := context.Background()
+c.String(ctx, "test/demo1", "app_name")
+c.Int64(ctx, "test/demo2", "retry")
+c.Int(ctx, "test/demo2", "retry")
+c.Float64(ctx, "test/demo4", "rate")
+c.Bool(ctx, "test/demo4", "enable")
+c.YamlDecode(ctx, "test/demo1", "log", &logConf)
+c.JsonDecode(ctx, "test/demo4", "data", &data)
+c.Decode(ctx, "test/demo4", "data", &data, json.Unmarshal)
 
-c.GetRaw("test/demo1", "app_name")
-c.UnsafeGetRaw("test/demo1", "app_name")
-c.GetRawString("test/demo1", "app_name")
+c.GetRaw(ctx, "test/demo1", "app_name")
+c.UnsafeGetRaw(ctx, "test/demo1", "app_name")
+c.GetRawString(ctx, "test/demo1", "app_name")
 
 c.OnKeyChange("test/demo1", "app_name", func([]byte) error) {
     // do something
