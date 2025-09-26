@@ -2,11 +2,11 @@ package config
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/welllog/golt/config/driver"
@@ -15,7 +15,6 @@ import (
 	"github.com/welllog/golt/contract"
 	"github.com/welllog/olog"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"gopkg.in/yaml.v3"
 )
 
 func NewConfigure(cfs []meta.Config, options ...Option) (*Configure, error) {
@@ -45,18 +44,11 @@ func NewConfigure(cfs []meta.Config, options ...Option) (*Configure, error) {
 }
 
 func FromFile(file string, options ...Option) (*Configure, error) {
-	var (
-		cs []meta.Config
-		fn func([]byte, any) error
-	)
+	var cs []meta.Config
 
-	ext := filepath.Ext(file)
-	switch ext {
-	case ".json":
-		fn = json.Unmarshal
-	case ".yaml":
-		fn = yaml.Unmarshal
-	default:
+	ext := strings.TrimPrefix(filepath.Ext(file), ".")
+	fn, ok := formatterMap[ext]
+	if !ok {
 		return nil, errors.New("unsupported config file format")
 	}
 

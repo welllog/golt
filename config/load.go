@@ -2,7 +2,6 @@ package config
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -12,7 +11,6 @@ import (
 	"unsafe"
 
 	"github.com/welllog/golt/config/driver"
-	"gopkg.in/yaml.v3"
 )
 
 type FieldLazyLoadMap map[unsafe.Pointer]func() error
@@ -253,17 +251,4 @@ func parseConfigTag(tag string) (configTag, error) {
 	}
 
 	return ct, nil
-}
-
-type formatter struct {
-	f string
-}
-
-func (f formatter) Decode(b []byte, dst any) error {
-	switch f.f {
-	case "json":
-		return json.Unmarshal(b, dst)
-	default:
-		return yaml.Unmarshal(b, dst)
-	}
 }
