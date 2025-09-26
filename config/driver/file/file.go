@@ -1,6 +1,7 @@
 package file
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,8 +12,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/welllog/golib/dsz"
 	"github.com/welllog/golib/mapz"
+	"github.com/welllog/golib/setz"
 	"github.com/welllog/golt/config/driver"
 	"github.com/welllog/golt/config/meta"
 	"github.com/welllog/golt/contract"
@@ -32,6 +33,7 @@ type file struct {
 	filepath2node  map[string]*fileNode
 	buf            map[string]*field
 	ch             chan string
+	quit           chan struct{}
 	logger         contract.Logger
 }
 
@@ -62,8 +64,8 @@ func New(c meta.Config, logger contract.Logger) (driver.Driver, error) {
 			fd.filepath2node[path] = node
 		}
 
-		if cfg.Dynamic {
-			node.dynamic = true
+		if cfg.Watch {
+			node.watch = true
 			watch = true
 		}
 
@@ -106,7 +108,7 @@ func (f *file) OnKeyChange(namespace, key string, hook func([]byte) error) bool 
 	return node.OnKeyChange(key, hook)
 }
 
-func (f *file) Get(namespace, key string) ([]byte, error) {
+func (f *file) Get(ctx context.Context, namespace, key string) ([]byte, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
@@ -123,7 +125,7 @@ func (f *file) Get(namespace, key string) ([]byte, error) {
 	return b, nil
 }
 
-func (f *file) GetString(namespace, key string) (string, error) {
+func (f *file) GetString(ctx context.Context, namespace, key string) (string, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
@@ -144,6 +146,7 @@ func (f *file) Close() {
 	if f.watcher != nil {
 		_ = f.watcher.Close()
 	}
+	close(f.quit)
 }
 
 func (f *file) loadToBuf(path string) error {
@@ -179,9 +182,9 @@ func (f *file) watch() error {
 	f.watcher = watcher
 	f.ch = make(chan string)
 
-	set := make(dsz.Set[string], len(f.filepath2node))
+	set := make(setz.Set[string], len(f.filepath2node))
 	for path, node := range f.filepath2node {
-		if node.dynamic {
+		if node.watch {
 			dir := filepath.Dir(path)
 			if set.Add(dir) {
 				f.logger.Debugf("watch path: %s", dir)
@@ -213,6 +216,8 @@ func (f *file) dedup() {
 
 	for {
 		select {
+		case <-f.quit:
+			return
 		case err, ok := <-f.watcher.Errors:
 			if !ok { // Channel was closed (i.e. Watcher.Close() was called).
 				return
@@ -233,7 +238,7 @@ func (f *file) dedup() {
 				continue
 			}
 
-			if !node.dynamic {
+			if !node.watch {
 				continue
 			}
 
@@ -254,26 +259,29 @@ func (f *file) dedup() {
 
 func (f *file) listenAndRefresh() {
 	for {
-		path := <-f.ch
+		select {
+		case <-f.quit:
+			return
+		case path := <-f.ch:
+			node, ok := f.filepath2node[path]
+			if !ok {
+				continue
+			}
 
-		node, ok := f.filepath2node[path]
-		if !ok {
-			continue
+			f.logger.Debugf("file %s changed", path)
+
+			if err := f.loadToBuf(path); err != nil {
+				f.logger.Errorf("reload file %s failed: %v", path, err)
+				continue
+			}
+
+			f.mu.Lock()
+			node.CacheFrom(f.buf)
+			f.mu.Unlock()
+
+			f.mu.RLock()
+			node.ExecuteHook(f.buf, f.logger)
+			f.mu.RUnlock()
 		}
-
-		f.logger.Debugf("file %s changed", path)
-
-		if err := f.loadToBuf(path); err != nil {
-			// TODO log
-			continue
-		}
-
-		f.mu.Lock()
-		node.CacheFrom(f.buf)
-		f.mu.Unlock()
-
-		f.mu.RLock()
-		node.ExecuteHook(f.buf, f.logger)
-		f.mu.RUnlock()
 	}
 }

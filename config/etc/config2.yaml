@@ -1,0 +1,93 @@
+  # one config source => one or multi namespace
+  # one or multi namespace => one config path
+  #            source
+  #     /         |         \
+  #    /          |          \
+  #   /           |           \
+  # namespace1  namespace2  namespace3
+  #   \           /           |
+  #    \         /            |
+  #     \       /             |
+  #      path1              path2
+  #
+  # config source
+  #
+  # file://<rootPath> load config from path, this path is the relative path of the executable file,
+  # when config files under the same parent directory, the files must share one source.
+  # LIKE:
+  #     - source: file:///home/project/config/
+  # or# - source: file://config/
+  #       configs:
+  #         - namespace: order_config
+  #           path: user.yaml
+  #         - namespace: page_config
+  #           path: page.yaml
+  #
+  # most of the time, one file source is enough.
+  # If the config files is in multiple directories, the root path can be empty,
+  # and the path item in namespace use file absolute path.
+  # LIKE:
+  #     - source: file://
+  #       configs:
+  #         - namespace: user_config
+  #           path: /home/project/config/user.yaml
+  #         - namespace: sys_config
+  #           path: /etc/sys_config.json
+  #
+  # recommend to put only config files in each config directory,
+  # otherwise when there are too many files in the directory,
+  # the number of files monitored will be very large, affecting performance, and files description
+  # will reach system limit.
+  #
+  # path item in namespace is the config file name with path, the file must be k-v format, support yaml, json
+  #
+  # etcd://<addr>,<addr> load config from etcd
+  # path item in namespace is the etcd key path maximum prefix matching
+  # LIKE:
+  #     - source: etcd://127.0.0.1:2379
+  #       configs:
+  #        - namespace: user_config
+  #          path: /project/config/user
+  #          # the key may be /project/config/user/default, /project/config/user/secret etc.
+  #
+  # notice: file diff with etcd
+  # file: the file content must be k-v format
+  # LIKE:
+  #    name: demo
+  #    no: 1
+  #
+  # in code, get the config content like:
+  # xx.Get("namespace1", "name")
+  # xx.Get("namespace1", "no")
+  #
+  # etcd: the etcd key is path with key name, the value is the config content.
+  # LIKE:
+  # etcd key is "/project/config/user/name", the value is "demo"
+  # etcd key is "/project/config/user/no", the value is "1"
+
+  - source: file://etc/
+    configs:
+      # namespace, used to distinguish different configurations with the same key
+      # multiple namespaces point to the same configuration path, separated by |
+      # namespace is unique globally, and namespace can only belong to one configuration source, and only has one path
+      - namespace: test/demo1 | test/demo2
+        # config file path relative to root path
+        path: test2.yaml
+        # the value is true will watch the config change, default is false
+        watch: true
+      - namespace: test/demo3
+        path: test2.json
+        watch: false
+  - source: etcd://127.0.0.1:2379
+    configs:
+      - namespace: test/demo4
+        # etcd key path prefix
+        path: /v1/test/demo4/
+        # the value is true will watch the config change, default is false
+        watch: true
+      - namespace: test/demo5
+        # etcd key path prefix
+        path: /v1/test/demo5/
+        # the value is true will watch the config change, default is false
+        watch: false
+

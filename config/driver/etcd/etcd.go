@@ -3,10 +3,11 @@ package etcd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
-	"github.com/welllog/golib/dsz"
+	"github.com/welllog/golib/setz"
 	"github.com/welllog/golt/config/driver"
 	"github.com/welllog/golt/config/meta"
 	"github.com/welllog/golt/contract"
@@ -22,6 +23,8 @@ var _ driver.Driver = (*etcd)(nil)
 
 type etcd struct {
 	client         *clientv3.Client
+	outerClient    bool
+	cancel         context.CancelFunc
 	namespace2node map[string]*etcdutil.Kv
 	watcher        *etcdutil.Watcher
 }
@@ -36,6 +39,7 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 		opt(&opts)
 	}
 
+	outerClient := true
 	if opts.etcdClient == nil {
 		if len(opts.etcdConfig.Endpoints) == 0 {
 			opts.etcdConfig.Endpoints = strings.Split(c.SourceAddr(), ",")
@@ -58,20 +62,24 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 			return nil, err
 		}
 		opts.etcdClient = client
+		outerClient = false
 	}
 
-	if opts.commonPrefixMinLen == 0 {
+	if opts.commonPrefixMinLen <= 0 {
 		opts.commonPrefixMinLen = 4
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	ed := etcd{
 		client:         opts.etcdClient,
+		outerClient:    outerClient,
+		cancel:         cancel,
 		namespace2node: make(map[string]*etcdutil.Kv, len(c.Configs)),
 	}
 
 	watcher := etcdutil.NewWatcher(opts.etcdClient).SetCommonPrefixMinLen(opts.commonPrefixMinLen).SetLogger(logger)
 	path2node := make(map[string]*etcdutil.Kv, len(c.Configs))
-	watchPath := make(dsz.Set[string], len(c.Configs))
+	watchPath := make(setz.Set[string], len(c.Configs))
 
 	for _, cfg := range c.Configs {
 		nps := cfg.Namespaces()
@@ -81,18 +89,20 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 			node = etcdutil.NewKv(cfg.Path, opts.etcdClient).SetLogger(logger)
 			path2node[cfg.Path] = node
 
-			if opts.preload || !cfg.Dynamic {
-				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-				err := node.Preload(ctx)
-				cancel()
+			if opts.preload {
+				opCtx, opCancel := context.WithTimeout(ctx, time.Minute)
+				err := node.Preload(opCtx)
+				opCancel()
 				if err != nil {
-					_ = opts.etcdClient.Close()
-					return nil, err
+					if !outerClient {
+						_ = opts.etcdClient.Close()
+					}
+					return nil, fmt.Errorf("preload failed: %w", err)
 				}
 			}
 		}
 
-		if cfg.Dynamic {
+		if cfg.Watch {
 			if watchPath.Add(cfg.Path) {
 				watcher.Attach(node)
 			}
@@ -109,7 +119,7 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 
 	if len(watchPath) > 0 {
 		ed.watcher = watcher
-		watcher.Run(context.Background())
+		watcher.Run(ctx)
 	}
 
 	return &ed, nil
@@ -136,13 +146,13 @@ func (e *etcd) OnKeyChange(namespace, key string, hook func([]byte) error) bool 
 	return node.OnKeyChange(key, hook)
 }
 
-func (e *etcd) Get(namespace, key string) ([]byte, error) {
+func (e *etcd) Get(ctx context.Context, namespace, key string) ([]byte, error) {
 	node, ok := e.namespace2node[namespace]
 	if !ok {
 		return nil, driver.ErrNotFound
 	}
 
-	b, err := node.UnsafeGet(context.Background(), key)
+	b, err := node.UnsafeGet(ctx, key)
 	if err != nil {
 		if errors.Is(err, etcdutil.ErrNotFound) {
 			return nil, driver.ErrNotFound
@@ -154,13 +164,13 @@ func (e *etcd) Get(namespace, key string) ([]byte, error) {
 	return b, nil
 }
 
-func (e *etcd) GetString(namespace, key string) (string, error) {
+func (e *etcd) GetString(ctx context.Context, namespace, key string) (string, error) {
 	node, ok := e.namespace2node[namespace]
 	if !ok {
 		return "", driver.ErrNotFound
 	}
 
-	value, err := node.GetString(context.Background(), key)
+	value, err := node.GetString(ctx, key)
 	if err != nil {
 		if errors.Is(err, etcdutil.ErrNotFound) {
 			return "", driver.ErrNotFound
@@ -173,5 +183,8 @@ func (e *etcd) GetString(namespace, key string) (string, error) {
 }
 
 func (e *etcd) Close() {
-	_ = e.client.Close()
+	if !e.outerClient {
+		_ = e.client.Close()
+	}
+	e.cancel()
 }

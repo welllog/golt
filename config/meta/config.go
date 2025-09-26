@@ -12,7 +12,7 @@ type Config struct {
 type Rule struct {
 	Namespace string `json:"namespace" yaml:"namespace"`
 	Path      string `json:"path" yaml:"path"`
-	Dynamic   bool   `json:"dynamic" yaml:"dynamic"`
+	Watch     bool   `json:"watch" yaml:"watch"`
 }
 
 func (c *Config) SourceSchema() string {

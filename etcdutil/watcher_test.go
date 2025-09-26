@@ -2,7 +2,9 @@ package etcdutil
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -71,24 +73,25 @@ func TestWatcher_SetCommonPrefixMinLen(t *testing.T) {
 	watcher.Attach(kv1)
 	watcher.Attach(kv2)
 
-	testz.Equal(t, 1, len(watcher.prefixs))
-	testz.Equal(t, "/v", watcher.prefixs[0])
+	testz.Equal(t, 1, len(watcher.prefixes))
+	testz.Equal(t, "/v", watcher.prefixes[0])
 
 	kv3 := NewKv("/t3/", &c)
 	watcher.Attach(kv3)
-	testz.Equal(t, 2, len(watcher.prefixs))
-	testz.Equal(t, "/v", watcher.prefixs[0])
-	testz.Equal(t, "/t3/", watcher.prefixs[1])
+	testz.Equal(t, 2, len(watcher.prefixes))
+	testz.Equal(t, "/v", watcher.prefixes[0])
+	testz.Equal(t, "/t3/", watcher.prefixes[1])
 
 	kv4 := NewKv("/t4/", &c)
 	watcher.Attach(kv4)
-	testz.Equal(t, 2, len(watcher.prefixs))
-	testz.Equal(t, "/v", watcher.prefixs[0])
-	testz.Equal(t, "/t", watcher.prefixs[1])
+	testz.Equal(t, 2, len(watcher.prefixes))
+	testz.Equal(t, "/v", watcher.prefixes[0])
+	testz.Equal(t, "/t", watcher.prefixes[1])
 }
 
 type testWatcher struct {
 	chs []*wch
+	mu  sync.RWMutex
 }
 
 type wch struct {
@@ -101,7 +104,9 @@ func (t *testWatcher) Watch(ctx context.Context, key string, opts ...clientv3.Op
 		key: key,
 		ch:  make(chan clientv3.WatchResponse, 10),
 	}
+	t.mu.Lock()
 	t.chs = append(t.chs, &w)
+	t.mu.Unlock()
 	return w.ch
 }
 
@@ -118,11 +123,14 @@ func (t *testWatcher) notifyCreate(key, value string) {
 		},
 	}
 
+	t.mu.RLock()
+	fmt.Printf("notify create %s %s, watch chann num: %d \n", key, value, len(t.chs))
 	for _, v := range t.chs {
 		if strings.HasPrefix(key, v.key) {
 			v.ch <- wrsp
 		}
 	}
+	t.mu.RUnlock()
 }
 
 func (t *testWatcher) notifyDel(key string) {

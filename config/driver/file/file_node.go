@@ -20,7 +20,7 @@ type entry struct {
 }
 
 type fileNode struct {
-	dynamic bool
+	watch   bool
 	entries map[string]*entry
 }
 
@@ -72,7 +72,7 @@ func (n *fileNode) CacheFrom(fields map[string]*field) {
 // OnKeyChange registers a hook function that will be executed when the value of the key is updated.
 // the key removed will not be executed.
 func (n *fileNode) OnKeyChange(key string, hook func([]byte) error) bool {
-	if !n.dynamic {
+	if !n.watch {
 		return false
 	}
 

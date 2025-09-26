@@ -3,6 +3,7 @@ package etcdutil
 import (
 	"context"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/welllog/golib/strz"
@@ -19,55 +20,56 @@ type Observer interface {
 type Watcher struct {
 	client             *clientv3.Client
 	observers          []Observer
-	prefixs            []string
+	prefixes           []string
 	commonPrefixMinLen int
 	state              int32
 	logger             contract.Logger
+	wg                 sync.WaitGroup
 }
 
 func NewWatcher(client *clientv3.Client) *Watcher {
 	return &Watcher{
 		client:             client,
 		commonPrefixMinLen: 1,
-		logger:             olog.GetLogger(),
+		logger:             olog.DynamicLogger{},
 	}
 }
 
-func (e *Watcher) SetCommonPrefixMinLen(l int) *Watcher {
+func (w *Watcher) SetCommonPrefixMinLen(l int) *Watcher {
 	if l > 1 {
-		e.commonPrefixMinLen = l
+		w.commonPrefixMinLen = l
 	}
 
-	return e
+	return w
 }
 
-func (e *Watcher) SetLogger(logger contract.Logger) *Watcher {
-	e.logger = logger
-	return e
+func (w *Watcher) SetLogger(logger contract.Logger) *Watcher {
+	w.logger = logger
+	return w
 }
 
 // Attach not goroutine safe
-func (e *Watcher) Attach(observer Observer) {
+func (w *Watcher) Attach(observer Observer) {
 	prefix := observer.Prefix()
 	var hasCommonPrefix bool
-	for i, v := range e.prefixs {
-		cpx := commonPrefix(prefix, v, e.commonPrefixMinLen)
+	for i, v := range w.prefixes {
+		cpx := commonPrefix(prefix, v, w.commonPrefixMinLen)
 		if cpx != "" {
-			e.prefixs[i] = cpx
+			w.prefixes[i] = cpx
 			hasCommonPrefix = true
 			break
 		}
 	}
 
 	if !hasCommonPrefix {
-		e.prefixs = append(e.prefixs, prefix)
+		w.prefixes = append(w.prefixes, prefix)
 	}
-	e.observers = append(e.observers, observer)
+	w.observers = append(w.observers, observer)
 }
 
 // HasObserver not goroutine safe
-func (e *Watcher) HasObserver(prefix string) bool {
-	for _, v := range e.observers {
+func (w *Watcher) HasObserver(prefix string) bool {
+	for _, v := range w.observers {
 		if v.Prefix() == prefix {
 			return true
 		}
@@ -76,35 +78,49 @@ func (e *Watcher) HasObserver(prefix string) bool {
 }
 
 // Run should exec after Attach
-func (e *Watcher) Run(ctx context.Context) {
-	if !atomic.CompareAndSwapInt32(&e.state, 0, 1) {
+func (w *Watcher) Run(ctx context.Context) {
+	if !atomic.CompareAndSwapInt32(&w.state, 0, 1) {
 		return
 	}
 
-	chs := make([]clientv3.WatchChan, len(e.prefixs))
-	for i, v := range e.prefixs {
-		chs[i] = e.client.Watch(ctx, v, clientv3.WithPrefix())
-		e.logger.Debugf("watch etcd key prefix: %s", v)
+	for _, v := range w.prefixes {
+		prefix := v
+
+		w.wg.Add(1)
+		go w.watch(ctx, prefix)
 	}
 
-	for _, ch := range chs {
-		go func(wch clientv3.WatchChan) {
-			for ret := range wch {
-				for _, ev := range ret.Events {
-					if ev.Type != clientv3.EventTypePut && ev.Type != clientv3.EventTypeDelete {
-						continue
-					}
+	w.wg.Wait()
+}
 
-					key := strz.UnsafeString(ev.Kv.Key)
-					e.logger.Debugf("key %s %s", key, ev.Type.String())
-					for _, obs := range e.observers {
-						if strings.HasPrefix(key, obs.Prefix()) {
-							obs.Handle(ev)
-						}
-					}
+func (w *Watcher) watch(ctx context.Context, prefix string) {
+	ch := w.client.Watch(ctx, prefix, clientv3.WithPrefix(), clientv3.WithPrevKV())
+	w.logger.Debugf("watch etcd key prefix: %s", prefix)
+
+	w.wg.Done()
+
+	for ret := range ch {
+		for _, ev := range ret.Events {
+			if ev.Type != clientv3.EventTypePut && ev.Type != clientv3.EventTypeDelete {
+				continue
+			}
+
+			key := strz.UnsafeString(ev.Kv.Key)
+			w.logger.Debugf("key %s %s", key, ev.Type.String())
+			for _, obs := range w.observers {
+				if strings.HasPrefix(key, obs.Prefix()) {
+					w.logger.Debugf("key %s %s", key, obs.Prefix())
+					func() {
+						defer func() {
+							if r := recover(); r != nil {
+								w.logger.Errorf("observer.Handle panic: %v", r)
+							}
+						}()
+						obs.Handle(ev)
+					}()
 				}
 			}
-		}(ch)
+		}
 	}
 }
 
@@ -120,6 +136,10 @@ func commonPrefix(s1, s2 string, commonSize int) string {
 			prefix = s1[:i]
 			break
 		}
+	}
+
+	if prefix == s1 || prefix == s2 {
+		return prefix
 	}
 
 	if len(prefix) < commonSize {
