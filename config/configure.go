@@ -2,18 +2,15 @@ package config
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
 
 	"github.com/welllog/golt/config/driver"
-	"github.com/welllog/golt/config/meta"
-	"github.com/welllog/golt/contract"
-	"gopkg.in/yaml.v3"
-
 	_ "github.com/welllog/golt/config/driver/etcd"
 	_ "github.com/welllog/golt/config/driver/file"
+	"github.com/welllog/golt/config/meta"
+	"github.com/welllog/golt/contract"
 )
 
 var ErrNotFound = driver.ErrNotFound
@@ -138,11 +135,15 @@ func (c *Configure) Bool(ctx context.Context, namespace, key string) (bool, erro
 }
 
 func (c *Configure) YamlDecode(ctx context.Context, namespace, key string, value any) error {
-	return c.Decode(ctx, namespace, key, value, yaml.Unmarshal)
+	return c.Decode(ctx, namespace, key, value, driver.MustGetDecoder("yaml"))
 }
 
 func (c *Configure) JsonDecode(ctx context.Context, namespace, key string, value any) error {
-	return c.Decode(ctx, namespace, key, value, json.Unmarshal)
+	return c.Decode(ctx, namespace, key, value, driver.MustGetDecoder("json"))
+}
+
+func (c *Configure) TomlDecode(ctx context.Context, namespace, key string, value any) error {
+	return c.Decode(ctx, namespace, key, value, driver.MustGetDecoder("toml"))
 }
 
 func (c *Configure) Decode(ctx context.Context, namespace, key string, value any, fn driver.Decoder) error {

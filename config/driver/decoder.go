@@ -3,6 +3,7 @@ package driver
 import (
 	"encoding/json"
 
+	"github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
 )
 
@@ -12,6 +13,7 @@ var decoderMap = map[string]Decoder{
 	"json": json.Unmarshal,
 	"yaml": yaml.Unmarshal,
 	"yml":  yaml.Unmarshal,
+	"toml": toml.Unmarshal,
 }
 
 func RegisterDecoder(format string, fn Decoder) {
@@ -21,6 +23,10 @@ func RegisterDecoder(format string, fn Decoder) {
 func GetDecoder(format string) (Decoder, bool) {
 	fn, ok := decoderMap[format]
 	return fn, ok
+}
+
+func MustGetDecoder(format string) Decoder {
+	return decoderMap[format]
 }
 
 func GetDecoderOrDefault(format string) Decoder {

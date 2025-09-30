@@ -172,6 +172,7 @@ c.Float64(ctx, "test/demo4", "rate")
 c.Bool(ctx, "test/demo4", "enable")
 c.YamlDecode(ctx, "test/demo1", "log", &logConf)
 c.JsonDecode(ctx, "test/demo4", "data", &data)
+c.TomlDecode(ctx, "test/demo5", "data", &data)
 c.Decode(ctx, "test/demo4", "data", &data, json.Unmarshal)
 
 c.GetRaw(ctx, "test/demo1", "app_name")

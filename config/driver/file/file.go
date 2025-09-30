@@ -2,20 +2,22 @@ package file
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/fsnotify/fsnotify"
 	"github.com/welllog/golib/mapz"
 	"github.com/welllog/golib/setz"
 	"github.com/welllog/golt/config/driver"
 	"github.com/welllog/golt/config/meta"
 	"github.com/welllog/golt/contract"
+	"gopkg.in/yaml.v3"
 )
 
 var _ driver.Driver = (*file)(nil)
@@ -60,6 +62,7 @@ func New(c meta.Config, logger contract.Logger) (driver.Driver, error) {
 
 			node = &fileNode{}
 			node.CacheFrom(fd.buf)
+			clear(fd.buf)
 			fd.filepath2node[path] = node
 		}
 
@@ -153,15 +156,18 @@ func (f *file) Close() {
 }
 
 func (f *file) loadToBuf(path string) error {
-	for k := range f.buf {
-		delete(f.buf, k)
-	}
+	var fn func([]byte, any) error
 
-	ext := strings.TrimPrefix(filepath.Ext(path), ".")
-	fn, ok := driver.GetDecoder(ext)
-	if !ok {
-		return fmt.Errorf("unsupported config file format: %s, "+
-			"you can register custom format decoder by driver.RegisterDecoder", ext)
+	ext := filepath.Ext(path)
+	switch ext {
+	case ".json":
+		fn = json.Unmarshal
+	case ".yaml", ".yml":
+		fn = yaml.Unmarshal
+	case ".toml":
+		fn = toml.Unmarshal
+	default:
+		return errors.New("file format only support json/yaml/toml, but got " + ext)
 	}
 
 	b, err := os.ReadFile(path)
@@ -270,6 +276,7 @@ func (f *file) listenAndRefresh() {
 
 			if err := f.loadToBuf(path); err != nil {
 				f.logger.Errorf("reload file %s failed: %v", path, err)
+				clear(f.buf)
 				continue
 			}
 
@@ -277,9 +284,12 @@ func (f *file) listenAndRefresh() {
 			node.CacheFrom(f.buf)
 			f.mu.Unlock()
 
+			// hookFlag update not need lock, because it only set true here and set false in ExecuteHook
 			f.mu.RLock()
 			node.ExecuteHook(f.buf, f.logger)
 			f.mu.RUnlock()
+
+			clear(f.buf)
 		}
 	}
 }

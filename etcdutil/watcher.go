@@ -122,6 +122,7 @@ func (w *Watcher) watch(ctx context.Context, prefix string) {
 			}
 		}
 	}
+	w.logger.Warnf("watch etcd key prefix: %s stopped", prefix)
 }
 
 func commonPrefix(s1, s2 string, commonSize int) string {
