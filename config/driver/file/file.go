@@ -145,13 +145,15 @@ func (f *file) GetString(ctx context.Context, namespace, key string) (string, er
 }
 
 func (f *file) Close() {
-	if f.watcher != nil {
-		_ = f.watcher.Close()
-	}
 	select {
 	case <-f.quit:
+		return
 	default:
 		close(f.quit)
+	}
+
+	if f.watcher != nil {
+		_ = f.watcher.Close()
 	}
 }
 
@@ -208,15 +210,16 @@ func (f *file) watch() error {
 }
 
 func (f *file) dedup() {
-	var (
-		// Wait 500ms for new events; each new event resets the timer.
-		waitFor     = 500 * time.Millisecond
-		path2timers = mapz.NewSafeKV[string, *time.Timer](5)
-		eventFunc   = func(name string) {
-			path2timers.Delete(name)
-			f.ch <- name
+	// Wait 500ms for new events; each new event resets the timer.
+	const waitFor = 500 * time.Millisecond
+	path2timers := mapz.NewSafeKV[string, *time.Timer](5)
+	eventFunc := func(name string) {
+		path2timers.Delete(name)
+		select {
+		case <-f.quit:
+		case f.ch <- name:
 		}
-	)
+	}
 
 	for {
 		select {
@@ -249,14 +252,14 @@ func (f *file) dedup() {
 			t, ok := path2timers.Get(e.Name)
 			// No timer yet, so create one.
 			if !ok {
-				t = time.AfterFunc(time.Minute, func() { eventFunc(e.Name) })
-				t.Stop()
-
+				t = time.AfterFunc(waitFor, func() {
+					eventFunc(e.Name)
+				})
 				path2timers.Set(e.Name, t)
+			} else {
+				// Reset the timer for this path, so it will start from 500ms again.
+				t.Reset(waitFor)
 			}
-
-			// Reset the timer for this path, so it will start from 500ms again.
-			t.Reset(waitFor)
 		}
 	}
 }

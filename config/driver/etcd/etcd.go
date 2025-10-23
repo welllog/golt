@@ -23,7 +23,8 @@ var _ driver.Driver = (*etcd)(nil)
 
 type etcd struct {
 	client         *clientv3.Client
-	outerClient    bool
+	closeClient    bool
+	closed         bool
 	cancel         context.CancelFunc
 	namespace2node map[string]*etcdutil.Kv
 	watcher        *etcdutil.Watcher
@@ -39,7 +40,7 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 		opt(&opts)
 	}
 
-	outerClient := true
+	closeClient := opts.closeCustomEtcdClient
 	if opts.etcdClient == nil {
 		if len(opts.etcdConfig.Endpoints) == 0 {
 			opts.etcdConfig.Endpoints = strings.Split(c.SourceAddr(), ",")
@@ -62,7 +63,7 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 			return nil, err
 		}
 		opts.etcdClient = client
-		outerClient = false
+		closeClient = true
 	}
 
 	if opts.commonPrefixMinLen <= 0 {
@@ -72,7 +73,7 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 	ctx, cancel := context.WithCancel(context.Background())
 	ed := etcd{
 		client:         opts.etcdClient,
-		outerClient:    outerClient,
+		closeClient:    closeClient,
 		cancel:         cancel,
 		namespace2node: make(map[string]*etcdutil.Kv, len(c.Configs)),
 	}
@@ -94,7 +95,7 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 				err := node.Preload(opCtx)
 				opCancel()
 				if err != nil {
-					if !outerClient {
+					if closeClient {
 						_ = opts.etcdClient.Close()
 					}
 					return nil, fmt.Errorf("preload failed: %w", err)
@@ -183,8 +184,13 @@ func (e *etcd) GetString(ctx context.Context, namespace, key string) (string, er
 }
 
 func (e *etcd) Close() {
-	if !e.outerClient {
+	if e.closed {
+		return
+	}
+
+	if e.closeClient {
 		_ = e.client.Close()
 	}
 	e.cancel()
+	e.closed = true
 }
