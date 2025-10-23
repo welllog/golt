@@ -2,7 +2,6 @@ package config
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -86,22 +85,37 @@ func FromFile(file string, options ...Option) (*Configure, error) {
 	return NewConfigure(cs, options...)
 }
 
+func FromEtcdConfig(clientConfig clientv3.Config, metaConfigKey string, fn driver.Decoder, options ...Option) (*Configure, error) {
+	cli, err := clientv3.New(clientConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create etcd client failed: %w", err)
+	}
+
+	options = append(options, WithCustomEtcdClient(cli), WithCloseCustomEtcdClient())
+	cfg, err := FromEtcd(cli, metaConfigKey, fn, options...)
+	if err != nil {
+		cli.Close()
+		return nil, err
+	}
+	return cfg, nil
+}
+
 func FromEtcd(cli *clientv3.Client, metaConfigKey string, fn driver.Decoder, options ...Option) (*Configure, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	rsp, err := cli.Get(ctx, metaConfigKey)
 	if err != nil {
-		return nil, fmt.Errorf("get meta config from etcd failed: %w", err)
+		return nil, fmt.Errorf("get meta config from etcd failed: %w, meta config key: %s", err, metaConfigKey)
 	}
 
 	if len(rsp.Kvs) == 0 {
-		return nil, errors.New("no meta config found in etcd")
+		return nil, fmt.Errorf("no meta config found in etcd key: %s", metaConfigKey)
 	}
 
 	var cs []meta.Config
 	if err := fn(rsp.Kvs[0].Value, &cs); err != nil {
-		return nil, fmt.Errorf("unmarshal meta config failed: %w", err)
+		return nil, fmt.Errorf("unmarshal meta config failed: %w, meta config key: %s", err, metaConfigKey)
 	}
 
 	return NewConfigure(cs, options...)
