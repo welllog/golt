@@ -92,7 +92,12 @@ func FromEtcdConfig(clientConfig clientv3.Config, metaConfigKey string, fn drive
 	}
 
 	options = append(options, WithCustomEtcdClient(cli), WithCloseCustomEtcdClient())
-	return FromEtcd(cli, metaConfigKey, fn, options...)
+	cfg, err := FromEtcd(cli, metaConfigKey, fn, options...)
+	if err != nil {
+		cli.Close()
+		return nil, err
+	}
+	return cfg, nil
 }
 
 func FromEtcd(cli *clientv3.Client, metaConfigKey string, fn driver.Decoder, options ...Option) (*Configure, error) {
