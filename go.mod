@@ -7,8 +7,8 @@ toolchain go1.24.0
 require (
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/gorilla/mux v1.8.1
-	github.com/welllog/golib v0.0.23
-	github.com/welllog/olog v0.1.7
+	github.com/welllog/golib v0.0.25
+	github.com/welllog/olog v0.1.8
 	go.etcd.io/etcd/api/v3 v3.5.11
 	go.etcd.io/etcd/client/v3 v3.5.11
 	go.uber.org/fx v1.24.0

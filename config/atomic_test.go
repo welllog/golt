@@ -18,7 +18,7 @@ type workConfig struct {
 
 func ExampleAtomicStore() {
 	driver.RegisterDriver("etcd", func(config meta.Config, logger contract.Logger) (driver.Driver, error) {
-		return etcd.NewAdvanced(config, logger, etcd.WithExistsEtcdClient(&clientv3.Client{
+		return etcd.NewAdvanced(config, logger, etcd.WithCustomEtcdClient(&clientv3.Client{
 			KV:      &testKV{},
 			Watcher: &testWatcher{},
 		}))
@@ -42,7 +42,7 @@ func ExampleAtomicStore() {
 
 func ExampleAtomicLoad() {
 	driver.RegisterDriver("etcd", func(config meta.Config, logger contract.Logger) (driver.Driver, error) {
-		return etcd.NewAdvanced(config, logger, etcd.WithExistsEtcdClient(&clientv3.Client{
+		return etcd.NewAdvanced(config, logger, etcd.WithCustomEtcdClient(&clientv3.Client{
 			KV:      &testKV{},
 			Watcher: &testWatcher{},
 		}))

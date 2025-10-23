@@ -46,7 +46,7 @@ func initConfigure(t *testing.T) *Configure {
 	}
 
 	driver.RegisterDriver("etcd", func(config meta.Config, logger contract.Logger) (driver.Driver, error) {
-		return etcd.NewAdvanced(config, logger, etcd.WithExistsEtcdClient(&c))
+		return etcd.NewAdvanced(config, logger, etcd.WithCustomEtcdClient(&c))
 	})
 
 	engine, err := FromFile("./etc/config.yaml")

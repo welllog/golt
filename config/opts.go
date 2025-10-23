@@ -12,6 +12,7 @@ type configOptions struct {
 	etcdCli                     *clientv3.Client
 	etcdWatchCommonPrefixMinLen int
 	etcdPreload                 bool
+	closeEtcdCli                bool
 }
 
 func WithLogger(logger contract.Logger) Option {
@@ -23,6 +24,12 @@ func WithLogger(logger contract.Logger) Option {
 func WithCustomEtcdClient(client *clientv3.Client) Option {
 	return func(opts *configOptions) {
 		opts.etcdCli = client
+	}
+}
+
+func WithCloseCustomEtcdClient() Option {
+	return func(opts *configOptions) {
+		opts.closeEtcdCli = true
 	}
 }
 

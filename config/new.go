@@ -23,6 +23,7 @@ func NewConfigure(cfs []meta.Config, options ...Option) (*Configure, error) {
 		etcdCli:                     nil,
 		etcdWatchCommonPrefixMinLen: 0,
 		etcdPreload:                 false,
+		closeEtcdCli:                false,
 	}
 	for _, opt := range options {
 		opt(&opts)
@@ -36,16 +37,19 @@ func NewConfigure(cfs []meta.Config, options ...Option) (*Configure, error) {
 		opts.logger = logger
 	}
 
-	etcdOpts := make([]etcd.Option, 0, 3)
+	etcdOpts := make([]etcd.Option, 0, 4)
 	if opts.etcdWatchCommonPrefixMinLen != 0 {
 		etcdOpts = append(etcdOpts, etcd.WithCommonPrefixMinLen(opts.etcdWatchCommonPrefixMinLen))
 	}
 	if opts.etcdPreload {
 		etcdOpts = append(etcdOpts, etcd.WithPreload())
 	}
+	if opts.closeEtcdCli {
+		etcdOpts = append(etcdOpts, etcd.WithCloseCustomEtcdClient())
+	}
 
 	if opts.etcdCli != nil {
-		etcdOpts2 := append(etcdOpts, etcd.WithExistsEtcdClient(opts.etcdCli))
+		etcdOpts2 := append(etcdOpts, etcd.WithCustomEtcdClient(opts.etcdCli))
 		driver.RegisterDriver("custom_etcd", func(c meta.Config, l contract.Logger) (driver.Driver, error) {
 			return etcd.NewAdvanced(c, l, etcdOpts2...)
 		})

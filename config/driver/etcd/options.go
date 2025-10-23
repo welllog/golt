@@ -9,6 +9,8 @@ type etcdDriverOption struct {
 	etcdConfig         clientv3.Config
 	commonPrefixMinLen int
 	preload            bool
+	// when custom etcd client is provided, closeCustomEtcdClient indicates whether to close it when etcd driver is closed
+	closeCustomEtcdClient bool
 }
 
 func WithEtcdConfig(config clientv3.Config) Option {
@@ -29,8 +31,14 @@ func WithPreload() Option {
 	}
 }
 
-func WithExistsEtcdClient(client *clientv3.Client) Option {
+func WithCustomEtcdClient(client *clientv3.Client) Option {
 	return func(o *etcdDriverOption) {
 		o.etcdClient = client
+	}
+}
+
+func WithCloseCustomEtcdClient() Option {
+	return func(o *etcdDriverOption) {
+		o.closeCustomEtcdClient = true
 	}
 }
