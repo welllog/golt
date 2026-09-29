@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/welllog/golib/testz"
 	"go.etcd.io/etcd/api/v3/mvccpb"
@@ -198,6 +199,7 @@ func TestKv_Get_NotFound(t *testing.T) {
 		getFromEtcdCount++
 	})
 
+	// not watched: a miss is not cached, every Get hits etcd
 	kv := NewKv("/v1/", &c)
 	ctx := context.Background()
 	_, err := kv.Get(ctx, "notfound")
@@ -206,7 +208,23 @@ func TestKv_Get_NotFound(t *testing.T) {
 
 	_, err = kv.Get(ctx, "notfound")
 	testz.Equal(t, ErrNotFound, err)
-	testz.Equal(t, 1, getFromEtcdCount, "query should from cache")
+	testz.Equal(t, 2, getFromEtcdCount, "miss should not be cached when not watched")
+
+	// watched: a miss is cached, no extra etcd round trip
+	twt := testWatcher{}
+	c2 := clientv3.Client{KV: tkv, Watcher: &twt}
+	kv2 := NewKv("/v1/", &c2).SetWatched()
+	watcher := NewWatcher(&c2)
+	watcher.Attach(kv2)
+	watcher.Run(context.Background())
+
+	_, err = kv2.Get(ctx, "notfound")
+	testz.Equal(t, ErrNotFound, err)
+	testz.Equal(t, 3, getFromEtcdCount)
+
+	_, err = kv2.Get(ctx, "notfound")
+	testz.Equal(t, ErrNotFound, err)
+	testz.Equal(t, 3, getFromEtcdCount, "miss should be cached when watched")
 }
 
 type testKV struct {
@@ -292,4 +310,125 @@ func (t *testKV) Do(ctx context.Context, op clientv3.Op) (clientv3.OpResponse, e
 
 func (t *testKV) Txn(ctx context.Context) clientv3.Txn {
 	panic("implement me")
+}
+
+func TestKv_NegativeCacheWithoutWatch(t *testing.T) {
+	tkv := initTestKv()
+	c := clientv3.Client{KV: tkv}
+
+	// not watched: a miss must not be cached, otherwise a later Put would
+	// never become visible
+	kv := NewKv("/v1/", &c)
+	ctx := context.Background()
+
+	_, err := kv.Get(ctx, "later")
+	testz.Equal(t, ErrNotFound, err)
+
+	tkv.Put(ctx, "/v1/later", "late")
+	val, err := kv.Get(ctx, "later")
+	testz.Nil(t, err)
+	testz.Equal(t, "late", string(val))
+}
+
+func TestKv_NegativeCacheWithWatch(t *testing.T) {
+	tkv := initTestKv()
+	twt := testWatcher{}
+	c := clientv3.Client{KV: tkv, Watcher: &twt}
+
+	kv := NewKv("/v1/", &c).SetWatched()
+	watcher := NewWatcher(&c)
+	watcher.Attach(kv)
+	watcher.Run(context.Background())
+
+	ctx := context.Background()
+
+	_, err := kv.Get(ctx, "later")
+	testz.Equal(t, ErrNotFound, err)
+
+	var getFromEtcdCount int
+	tkv.SetGetHook(func(key string) { getFromEtcdCount++ })
+
+	// watched: the miss is cached, no extra etcd round trip
+	_, err = kv.Get(ctx, "later")
+	testz.Equal(t, ErrNotFound, err)
+	testz.Equal(t, 0, getFromEtcdCount)
+
+	// ... and a watch event flips it positive
+	twt.notifyCreate("/v1/later", "late")
+	time.Sleep(time.Millisecond)
+	val, err := kv.Get(ctx, "later")
+	testz.Nil(t, err)
+	testz.Equal(t, "late", string(val))
+}
+
+func TestKv_HandleHookMayCallOnKeyChange(t *testing.T) {
+	tkv := initTestKv()
+	twt := testWatcher{}
+	c := clientv3.Client{KV: tkv, Watcher: &twt}
+
+	kv := NewKv("/v1/", &c)
+	watcher := NewWatcher(&c)
+	watcher.Attach(kv)
+	watcher.Run(context.Background())
+
+	_, err := kv.GetString(context.Background(), "foo")
+	testz.Nil(t, err)
+
+	completed := make(chan struct{})
+	kv.OnKeyChange("foo", func(b []byte) error {
+		// used to deadlock: Handle executed hooks while holding the read lock
+		kv.OnKeyChange("foo", func(b []byte) error { return nil })
+		close(completed)
+		return nil
+	})
+
+	twt.notifyCreate("/v1/foo", "demo10")
+
+	select {
+	case <-completed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("hook calling OnKeyChange deadlocked")
+	}
+}
+
+func BenchmarkKv_Handle(b *testing.B) {
+	tkv := initTestKv()
+	twt := testWatcher{}
+	c := clientv3.Client{KV: tkv, Watcher: &twt}
+
+	kv := NewKv("/v1/", &c)
+	watcher := NewWatcher(&c)
+	watcher.Attach(kv)
+	watcher.Run(context.Background())
+
+	_, _ = kv.GetString(context.Background(), "foo")
+	kv.OnKeyChange("foo", func(b []byte) error { return nil })
+
+	newEvent := func(val string) *clientv3.Event {
+		return &clientv3.Event{
+			Type: mvccpb.PUT,
+			Kv:   &mvccpb.KeyValue{Key: []byte("/v1/foo"), Value: []byte(val)},
+		}
+	}
+
+	b.Run("same_value", func(b *testing.B) {
+		ev := newEvent("demo1") // cached value: no diff, no hook
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			kv.Handle(ev)
+		}
+	})
+
+	b.Run("changed_value", func(b *testing.B) {
+		evA := newEvent("demo10")
+		evB := newEvent("demo11")
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if i%2 == 0 {
+				kv.Handle(evA)
+			} else {
+				kv.Handle(evB)
+			}
+		}
+	})
 }

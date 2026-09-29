@@ -65,11 +65,30 @@ func (c *CorsConfig) validateOrigin(origin string) bool {
 	}
 
 	for _, o := range c.AllowOrigins {
-		if o == origin || (o[0] == '*' && strings.HasSuffix(origin, o[1:])) {
+		if o == origin || (o[0] == '*' && matchWildcardOrigin(origin, o[1:])) {
 			return true
 		}
 	}
 
+	return false
+}
+
+// matchWildcardOrigin reports whether origin ends with suffix at a host
+// boundary, so "*127.0.0.1" matches "https://127.0.0.1" but not
+// "https://evil127.0.0.1".
+func matchWildcardOrigin(origin, suffix string) bool {
+	if !strings.HasSuffix(origin, suffix) || len(origin) == len(suffix) {
+		return false
+	}
+
+	if suffix[0] == '.' {
+		return true // the dot boundary is part of the suffix
+	}
+
+	switch origin[len(origin)-len(suffix)-1] {
+	case '.', '/':
+		return true
+	}
 	return false
 }
 
@@ -189,9 +208,12 @@ func notCors(origin, host string) bool {
 		return true
 	}
 
-	if len(origin) > 9 && (origin[:7] == "http://" && origin[7:] == host ||
-		origin[:8] == "https://" && origin[8:] == host) {
-		return true
+	// the host part must be non-empty, so a bare "http://" matches nothing
+	if len(origin) > len("http://") && origin[:len("http://")] == "http://" {
+		return origin[len("http://"):] == host
+	}
+	if len(origin) > len("https://") && origin[:len("https://")] == "https://" {
+		return origin[len("https://"):] == host
 	}
 
 	return false

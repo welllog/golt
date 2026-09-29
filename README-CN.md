@@ -23,7 +23,7 @@ engine.Any("/hello", func(ctx *srvhttp.Context) (any, error) {
 // {"data":{"hello":"world"}}
 
 engine.POST("/error", func(ctx *Context) (any, error) {
-    return nil, unierr.New(1000, "test error").WithData(map[string]int{"reason": 20})
+    return nil, unierr.New(1000, "test error").SetData(map[string]int{"reason": 20})
 })
 // Output:
 // {"code":1000,"msg":"test error","data":{"reason":20}}
@@ -142,21 +142,17 @@ golt的config库提供了统一的配置管理，支持从文件、etcd加载配
         # 是否监听该key path变动来动态加载配置
         watch: true
 ```
+注意：etcd驱动采用懒加载，`OnKeyChange` 只对被访问过的key生效（`Get`/`GetString`访问过即可，即使当时key不存在；或通过 `WithEtcdPreload` 预加载）。
+从未被访问过的key的变更通知会被忽略。若需要从启动起就监听某个key，请在注册hook前访问一次，或开启预加载。
 #### 从自定义etcd客户端加载配置
-```yaml
-  # 加载配置的源为自定义etcd客户端
-  - source: custom_etcd://
-    configs:
-      # 命名空间，决定了该配置从哪个etcd及其key path中读取
-      - namespace: test/demo4
-        # 当前etcd下的key path
-        path: /v1/test/demo4/
-        # 是否监听该key path变动来动态加载配置
-        watch: true
+使用自定义 etcd 客户端时，source 仍然写 `etcd://`，客户端通过 `WithCustomEtcdClient` 传入，
+所有 `etcd://` 源都会复用该客户端，不再单独建连：
+```
+c, err := config.FromFile("./config.yaml", config.WithCustomEtcdClient(cli))
 ```
 #### config使用概览
 ```
-c, err := FromFile("./config.yaml") 
+c, err := FromFile("./config.yaml")
 if err != nil {
     panic(err)
 }
@@ -177,7 +173,9 @@ c.GetRaw(ctx, "test/demo1", "app_name")
 c.UnsafeGetRaw(ctx, "test/demo1", "app_name")
 c.GetRawString(ctx, "test/demo1", "app_name")
 
-c.OnKeyChange("test/demo1", "app_name", func([]byte) error) {
+err = c.OnKeyChange("test/demo1", "app_name", func([]byte) error {
     // do something
-}
+    return nil
+})
+// err 非 nil 表示 namespace 不存在，或该 namespace 未在配置中开启 watch
 ```

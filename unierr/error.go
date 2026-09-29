@@ -45,10 +45,42 @@ func Wrap(err error, code int, msg string) *Error {
 		err:      err,
 		msg:      msg,
 		code:     code,
-		httpCode: http.StatusBadRequest,
+		httpCode: grpcHTTPCode(code),
 	}
 
 	return &e
+}
+
+// grpcHTTPCode derives the default HTTP status from a gRPC code, aligned
+// with the grpc-gateway mapping; custom business codes fall back to 400.
+// SetHttpCode overrides it.
+func grpcHTTPCode(code int) int {
+	switch codes.Code(code) {
+	case codes.InvalidArgument, codes.FailedPrecondition, codes.OutOfRange:
+		return http.StatusBadRequest
+	case codes.Unauthenticated:
+		return http.StatusUnauthorized
+	case codes.PermissionDenied:
+		return http.StatusForbidden
+	case codes.NotFound:
+		return http.StatusNotFound
+	case codes.AlreadyExists, codes.Aborted:
+		return http.StatusConflict
+	case codes.ResourceExhausted:
+		return http.StatusTooManyRequests
+	case codes.Canceled:
+		return http.StatusRequestTimeout
+	case codes.DeadlineExceeded:
+		return http.StatusGatewayTimeout
+	case codes.Unimplemented:
+		return http.StatusNotImplemented
+	case codes.Unavailable:
+		return http.StatusServiceUnavailable
+	case codes.Internal, codes.DataLoss:
+		return http.StatusInternalServerError
+	default: // OK or custom business codes
+		return http.StatusBadRequest
+	}
 }
 
 func Wrapf(err error, code int, format string, args ...any) *Error {
@@ -68,17 +100,25 @@ func FromStatusErr(err error) *Error {
 	return FromStatus(status.Convert(err))
 }
 
-func (e *Error) WithHttpCode(httpCode int) *Error {
+// SetHttpCode sets the HTTP status code, mutates the receiver and returns
+// it for chaining. Do not call this on a shared package-level *Error:
+// it would be visible to every later use of that error. Build a fresh
+// New(...) instead when a variant is needed.
+func (e *Error) SetHttpCode(httpCode int) *Error {
 	e.httpCode = httpCode
 	return e
 }
 
-func (e *Error) WithData(data any) *Error {
+// SetData sets the response data, mutates the receiver and returns it for
+// chaining. Do not call this on a shared package-level *Error.
+func (e *Error) SetData(data any) *Error {
 	e.data = data
 	return e
 }
 
-func (e *Error) WithDetails(details ...proto.Message) *Error {
+// SetDetails appends the details, mutates the receiver and returns it for
+// chaining. Do not call this on a shared package-level *Error.
+func (e *Error) SetDetails(details ...proto.Message) *Error {
 	e.details = append(e.details, details...)
 	return e
 }
@@ -135,14 +175,14 @@ func (e *Error) MarshalJSON() ([]byte, error) {
 
 	buf.WriteString(`{"code":`)
 	buf.WriteString(strconv.Itoa(e.code))
-	buf.WriteString(`,"msg":"`)
-	buf.WriteString(e.msg)
-	buf.WriteString(`"`)
+	buf.WriteString(`,"msg":`)
+	msgBytes, err := json.Marshal(e.msg)
+	if err != nil {
+		return nil, err
+	}
+	buf.Write(msgBytes)
 
-	var (
-		err error
-		b   []byte
-	)
+	var b []byte
 	if e.data != nil {
 		buf.WriteString(`,"data":`)
 		err = json.NewEncoder(&buf).Encode(e.data)

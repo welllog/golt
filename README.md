@@ -24,7 +24,7 @@ engine.Any("/hello", func(ctx *srvhttp.Context) (any, error) {
 // {"data":{"hello":"world"}}
 
 engine.POST("/error", func(ctx *Context) (any, error) {
-    return nil, unierr.New(1000, "test error").WithData(map[string]int{"reason": 20})
+    return nil, unierr.New(1000, "test error").SetData(map[string]int{"reason": 20})
 })
 // Output:
 // {"code":1000,"msg":"test error","data":{"reason":20}}
@@ -143,22 +143,21 @@ etcd, supports dynamic loading of configuration, and supports configuration upda
         # Whether to monitor the changes of the key path to dynamically load the configuration
         watch: true
 ```
-#### Load configuration from custom etcd
-```yaml
-  # Load the configuration file from custom etcd
-  - source: custom_etcd://
-    configs:
-      # The namespace determines which etcd and key path the configuration is read from.
-      - namespace: test/demo4
-        # The key path under the current etcd
-        path: /v1/test/demo4/
-        # Whether to monitor the changes of the key path to dynamically load the configuration
-        watch: true
+NOTE: the etcd driver loads lazily; `OnKeyChange` only fires for keys already accessed
+(via `Get`/`GetString`, even if the key was absent at the time, or via `WithEtcdPreload`).
+Change events on never-accessed keys are ignored. To watch a key from startup, access it
+once before registering the hook, or enable preload.
+#### Load configuration from custom etcd client
+When using a custom etcd client, keep writing `etcd://` as the source and pass
+the client via `WithCustomEtcdClient`; every `etcd://` source then reuses it
+instead of dialing its own connection:
+```
+c, err := config.FromFile("./config.yaml", config.WithCustomEtcdClient(cli))
 ```
 
 #### config usage
 ```
-c, err := FromFile("./config.yaml") 
+c, err := FromFile("./config.yaml")
 if err != nil {
     panic(err)
 }
@@ -179,8 +178,10 @@ c.GetRaw(ctx, "test/demo1", "app_name")
 c.UnsafeGetRaw(ctx, "test/demo1", "app_name")
 c.GetRawString(ctx, "test/demo1", "app_name")
 
-c.OnKeyChange("test/demo1", "app_name", func([]byte) error) {
+err = c.OnKeyChange("test/demo1", "app_name", func([]byte) error {
     // do something
-}
+    return nil
+})
+// a non-nil err means the namespace is unknown, or watch is not enabled
+// for it in the meta config
 ```
-        

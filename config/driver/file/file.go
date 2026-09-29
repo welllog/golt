@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +33,7 @@ type file struct {
 	namespace2node map[string]*fileNode
 	filepath2node  map[string]*fileNode
 	buf            map[string]*field
+	pending        []pendingHook
 	ch             chan string
 	quit           chan struct{}
 	logger         contract.Logger
@@ -98,16 +100,19 @@ func (f *file) Namespaces() []string {
 	return nps
 }
 
-func (f *file) OnKeyChange(namespace, key string, hook func([]byte) error) bool {
+func (f *file) OnKeyChange(namespace, key string, hook func([]byte) error) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	node, ok := f.namespace2node[namespace]
 	if !ok {
-		return false
+		return fmt.Errorf("unknown namespace %q: %w", namespace, driver.ErrNotFound)
 	}
 
-	return node.OnKeyChange(key, hook)
+	if err := node.OnKeyChange(key, hook); err != nil {
+		return fmt.Errorf("namespace %q: %w", namespace, err)
+	}
+	return nil
 }
 
 func (f *file) Get(ctx context.Context, namespace, key string) ([]byte, error) {
@@ -160,7 +165,7 @@ func (f *file) Close() {
 func (f *file) loadToBuf(path string) error {
 	var fn func([]byte, any) error
 
-	ext := filepath.Ext(path)
+	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".json":
 		fn = json.Unmarshal
@@ -285,12 +290,18 @@ func (f *file) listenAndRefresh() {
 
 			f.mu.Lock()
 			node.CacheFrom(f.buf)
+			f.pending = node.CollectHooks(f.buf, f.pending[:0])
 			f.mu.Unlock()
 
-			// hookFlag update not need lock, because it only set true here and set false in ExecuteHook
-			f.mu.RLock()
-			node.ExecuteHook(f.buf, f.logger)
-			f.mu.RUnlock()
+			// hooks run without f.mu held, so they may call Get/OnKeyChange
+			for _, p := range f.pending {
+				f.logger.Debugf("key %s changed", p.key)
+				for _, hook := range p.hooks {
+					if err := hook(p.value); err != nil {
+						f.logger.Warnf("key %s hook failed: %s", p.key, err.Error())
+					}
+				}
+			}
 
 			clear(f.buf)
 		}

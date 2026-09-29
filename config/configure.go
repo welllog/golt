@@ -3,6 +3,8 @@ package config
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -18,16 +20,33 @@ var ErrNotFound = driver.ErrNotFound
 type Configure struct {
 	ds     map[string]driver.Driver
 	logger contract.Logger
+	// closeEtcdCli is only set on a successful build, so failure paths never
+	// close a caller-owned client
+	closeEtcdCli func()
 }
 
-func newConfigure(cfs []meta.Config, logger contract.Logger) (*Configure, error) {
+func newConfigure(cfs []meta.Config, logger contract.Logger, overrides map[string]driver.Factory) (*Configure, error) {
+	// reject duplicate namespaces before any driver is created: a duplicate
+	// inside one source would otherwise be swallowed by driver construction
+	seen := make(map[string]struct{})
+	for _, c := range cfs {
+		for _, rule := range c.Configs {
+			for _, np := range rule.Namespaces() {
+				if _, ok := seen[np]; ok {
+					return nil, errors.New("duplicate namespace: " + np + " (source " + c.Source + ")")
+				}
+				seen[np] = struct{}{}
+			}
+		}
+	}
+
 	cfg := Configure{
 		ds:     make(map[string]driver.Driver, len(cfs)*2),
 		logger: logger,
 	}
 
 	for _, c := range cfs {
-		d, err := driver.New(c, logger)
+		d, err := driver.New(c, logger, overrides)
 		if err != nil {
 			logger.Errorf("new driver failed: %s %s", c.SourceSchema(), c.SourceAddr())
 			cfg.Close()
@@ -40,7 +59,7 @@ func newConfigure(cfs []meta.Config, logger contract.Logger) (*Configure, error)
 				d.Close()
 				cfg.Close()
 				logger.Errorf("duplicate namespace: %s on %s %s", v, c.SourceSchema(), c.SourceAddr())
-				return nil, errors.New("duplicate namespace:" + v)
+				return nil, errors.New("duplicate namespace: " + v)
 			}
 			cfg.ds[v] = d
 		}
@@ -49,17 +68,26 @@ func newConfigure(cfs []meta.Config, logger contract.Logger) (*Configure, error)
 	return &cfg, nil
 }
 
-func (c *Configure) OnKeyChange(namespace, key string, hook func([]byte) error) bool {
+// OnKeyChange registers a hook to run when the key's value changes.
+// It returns an error wrapping ErrNotFound when the namespace is unknown,
+// or driver.ErrNotWatchable when watch is not enabled for the namespace.
+func (c *Configure) OnKeyChange(namespace, key string, hook func([]byte) error) error {
 	d, ok := c.ds[namespace]
-	if ok {
-		ok = d.OnKeyChange(namespace, key, hook)
-	}
-
 	if !ok {
-		c.logger.Warnf("OnKeyChange register failed: namespace=%s key=%s", namespace, key)
+		return fmt.Errorf("unknown namespace %q: %w", namespace, ErrNotFound)
 	}
 
-	return ok
+	return d.OnKeyChange(namespace, key, hook)
+}
+
+// Namespaces returns all loaded namespaces, sorted.
+func (c *Configure) Namespaces() []string {
+	nps := make([]string, 0, len(c.ds))
+	for np := range c.ds {
+		nps = append(nps, np)
+	}
+	slices.Sort(nps)
+	return nps
 }
 
 func (c *Configure) GetRaw(ctx context.Context, namespace, key string) ([]byte, error) {
@@ -160,9 +188,17 @@ func (c *Configure) Decode(ctx context.Context, namespace, key string, value any
 	return fn(b, value)
 }
 
+// Close closes all drivers, then the custom etcd client if
+// WithCloseCustomEtcdClient was set. It must not be called concurrently;
+// repeated sequential calls are no-ops.
 func (c *Configure) Close() {
 	for _, v := range c.ds {
 		v.Close()
+	}
+
+	if c.closeEtcdCli != nil {
+		c.closeEtcdCli()
+		c.closeEtcdCli = nil
 	}
 }
 

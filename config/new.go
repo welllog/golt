@@ -16,6 +16,9 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
+// NewConfigure creates a Configure from meta configs.
+// When WithCustomEtcdClient is set, every etcd:// source in cfs reuses that
+// client instead of dialing its own.
 func NewConfigure(cfs []meta.Config, options ...Option) (*Configure, error) {
 	opts := configOptions{
 		logger:                      nil,
@@ -36,37 +39,43 @@ func NewConfigure(cfs []meta.Config, options ...Option) (*Configure, error) {
 		opts.logger = logger
 	}
 
-	etcdOpts := make([]etcd.Option, 0, 4)
-	if opts.etcdWatchCommonPrefixMinLen != 0 {
-		etcdOpts = append(etcdOpts, etcd.WithCommonPrefixMinLen(opts.etcdWatchCommonPrefixMinLen))
-	}
-	if opts.etcdPreload {
-		etcdOpts = append(etcdOpts, etcd.WithPreload())
-	}
-	if opts.closeEtcdCli {
-		etcdOpts = append(etcdOpts, etcd.WithCloseCustomEtcdClient())
+	var overrides map[string]driver.Factory
+	if opts.etcdCli != nil || opts.etcdWatchCommonPrefixMinLen != 0 || opts.etcdPreload {
+		etcdOpts := make([]etcd.Option, 0, 3)
+		if opts.etcdWatchCommonPrefixMinLen != 0 {
+			etcdOpts = append(etcdOpts, etcd.WithCommonPrefixMinLen(opts.etcdWatchCommonPrefixMinLen))
+		}
+		if opts.etcdPreload {
+			etcdOpts = append(etcdOpts, etcd.WithPreload())
+		}
+		if opts.etcdCli != nil {
+			etcdOpts = append(etcdOpts, etcd.WithCustomEtcdClient(opts.etcdCli))
+		}
+
+		overrides = map[string]driver.Factory{
+			"etcd": func(c meta.Config, l contract.Logger) (driver.Driver, error) {
+				return etcd.NewAdvanced(c, l, etcdOpts...)
+			},
+		}
 	}
 
-	if opts.etcdCli != nil {
-		etcdOpts2 := append(etcdOpts, etcd.WithCustomEtcdClient(opts.etcdCli))
-		driver.RegisterDriver("custom_etcd", func(c meta.Config, l contract.Logger) (driver.Driver, error) {
-			return etcd.NewAdvanced(c, l, etcdOpts2...)
-		})
+	cfg, err := newConfigure(cfs, opts.logger, overrides)
+	if err != nil {
+		return nil, err
 	}
 
-	if len(etcdOpts) > 0 {
-		driver.RegisterDriver("etcd", func(c meta.Config, l contract.Logger) (driver.Driver, error) {
-			return etcd.NewAdvanced(c, l, etcdOpts...)
-		})
+	// every etcd:// driver shares this client, so none of them may close it;
+	// Close does it exactly once, and only after a successful build
+	if opts.etcdCli != nil && opts.closeEtcdCli {
+		cfg.closeEtcdCli = func() { _ = opts.etcdCli.Close() }
 	}
-
-	return newConfigure(cfs, opts.logger)
+	return cfg, nil
 }
 
 func FromFile(file string, options ...Option) (*Configure, error) {
 	var cs []meta.Config
 
-	ext := strings.TrimPrefix(filepath.Ext(file), ".")
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(file), "."))
 	fn, ok := driver.GetDecoder(ext)
 	if !ok {
 		return nil, fmt.Errorf("unsupported config file format: %s, "+

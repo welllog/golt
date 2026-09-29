@@ -4,11 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"testing"
 
-	"github.com/welllog/golt/config/driver"
-	"github.com/welllog/golt/config/driver/etcd"
-	"github.com/welllog/golt/config/meta"
-	"github.com/welllog/golt/contract"
+	"github.com/welllog/golib/testz"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -17,14 +15,10 @@ type workConfig struct {
 }
 
 func ExampleAtomicStore() {
-	driver.RegisterDriver("etcd", func(config meta.Config, logger contract.Logger) (driver.Driver, error) {
-		return etcd.NewAdvanced(config, logger, etcd.WithCustomEtcdClient(&clientv3.Client{
-			KV:      &testKV{},
-			Watcher: &testWatcher{},
-		}))
-	})
-
-	engine, err := FromFile("./etc/config.yaml")
+	engine, err := FromFile("./etc/config.yaml", WithCustomEtcdClient(&clientv3.Client{
+		KV:      &testKV{},
+		Watcher: &testWatcher{},
+	}))
 	if err != nil {
 		panic(err)
 	}
@@ -41,14 +35,10 @@ func ExampleAtomicStore() {
 }
 
 func ExampleAtomicLoad() {
-	driver.RegisterDriver("etcd", func(config meta.Config, logger contract.Logger) (driver.Driver, error) {
-		return etcd.NewAdvanced(config, logger, etcd.WithCustomEtcdClient(&clientv3.Client{
-			KV:      &testKV{},
-			Watcher: &testWatcher{},
-		}))
-	})
-
-	engine, err := FromFile("./etc/config.yaml")
+	engine, err := FromFile("./etc/config.yaml", WithCustomEtcdClient(&clientv3.Client{
+		KV:      &testKV{},
+		Watcher: &testWatcher{},
+	}))
 	if err != nil {
 		panic(err)
 	}
@@ -59,8 +49,13 @@ func ExampleAtomicLoad() {
 		panic(err)
 	}
 
-	w := (*work)(AtomicLoad(&c.work))
+	w := AtomicLoad(&c.work)
 	fmt.Println(*w)
 	// Output:
 	// {engineer 10000}
+}
+
+func TestAtomicLoad_NilField(t *testing.T) {
+	var p *int
+	testz.Nil(t, AtomicLoad(&p))
 }

@@ -105,6 +105,7 @@ func NewAdvanced(c meta.Config, logger contract.Logger, options ...Option) (driv
 
 		if cfg.Watch {
 			if watchPath.Add(cfg.Path) {
+				node.SetWatched()
 				watcher.Attach(node)
 			}
 		}
@@ -134,17 +135,19 @@ func (e *etcd) Namespaces() []string {
 	return nps
 }
 
-func (e *etcd) OnKeyChange(namespace, key string, hook func([]byte) error) bool {
+func (e *etcd) OnKeyChange(namespace, key string, hook func([]byte) error) error {
 	node, ok := e.namespace2node[namespace]
 	if !ok {
-		return false
+		return fmt.Errorf("unknown namespace %q: %w", namespace, driver.ErrNotFound)
 	}
 
-	if !e.watcher.HasObserver(node.Prefix()) {
-		return false
+	// watcher is nil when no rule of this driver enables watch
+	if e.watcher == nil || !e.watcher.HasObserver(node.Prefix()) {
+		return fmt.Errorf("namespace %q: %w", namespace, driver.ErrNotWatchable)
 	}
 
-	return node.OnKeyChange(key, hook)
+	node.OnKeyChange(key, hook)
+	return nil
 }
 
 func (e *etcd) Get(ctx context.Context, namespace, key string) ([]byte, error) {

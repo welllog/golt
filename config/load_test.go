@@ -10,10 +10,6 @@ import (
 	"unsafe"
 
 	"github.com/welllog/golib/testz"
-	"github.com/welllog/golt/config/driver"
-	"github.com/welllog/golt/config/driver/etcd"
-	"github.com/welllog/golt/config/meta"
-	"github.com/welllog/golt/contract"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -36,14 +32,10 @@ type addrDemo struct {
 }
 
 func TestConfigure_InitAndPreload(t *testing.T) {
-	driver.RegisterDriver("etcd", func(config meta.Config, logger contract.Logger) (driver.Driver, error) {
-		return etcd.NewAdvanced(config, logger, etcd.WithCustomEtcdClient(&clientv3.Client{
-			KV:      &testKV{},
-			Watcher: &testWatcher{},
-		}))
-	})
-
-	engine, err := FromFile("./etc/config2.yaml")
+	engine, err := FromFile("./etc/config2.yaml", WithCustomEtcdClient(&clientv3.Client{
+		KV:      &testKV{},
+		Watcher: &testWatcher{},
+	}))
 	if err != nil {
 		panic(err)
 	}
@@ -94,8 +86,8 @@ func TestConfigure_InitAndPreload(t *testing.T) {
 	testz.Equal(t, c.addr.Province, province1)
 	testz.Equal(t, (*c.addr2).Province, province1)
 	testz.Equal(t, (*c.addr3).Province, province1)
-	testz.Equal(t, (*c.addr4).Province, province2)
-	testz.Equal(t, (*c.addr5).Province, province2)
+	testz.Equal(t, AtomicLoad(&c.addr4).Province, province2)
+	testz.Equal(t, AtomicLoad(&c.addr5).Province, province2)
 
 	_, err = f.Seek(io.SeekStart, 0)
 	testz.Nil(t, err)
@@ -107,4 +99,20 @@ func TestConfigure_InitAndPreload(t *testing.T) {
 		t.Errorf("notExist should be error")
 	}
 	fmt.Println(err)
+}
+
+func TestConfigure_InitAndPreloadZeroTimeout(t *testing.T) {
+	// timeout <= 0 means no timeout; it used to expire the load context immediately
+	engine, err := FromFile("./etc/config2.yaml", WithCustomEtcdClient(&clientv3.Client{
+		KV:      &testKV{},
+		Watcher: &testWatcher{},
+	}))
+	if err != nil {
+		panic(err)
+	}
+
+	var c configDemo
+	_, err = engine.InitAndPreload(&c, 0)
+	testz.Nil(t, err)
+	testz.Equal(t, "demo1", c.name)
 }

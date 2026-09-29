@@ -24,7 +24,11 @@ func (c *Config) SourceSchema() string {
 }
 
 func (c *Config) SourceAddr() string {
-	return c.Source[strings.Index(c.Source, "://")+3:]
+	i := strings.Index(c.Source, "://")
+	if i < 0 {
+		return ""
+	}
+	return c.Source[i+3:]
 }
 
 func (r *Rule) Namespaces() []string {

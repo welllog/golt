@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/welllog/golib/strz"
 	"github.com/welllog/golt/contract"
@@ -27,6 +28,11 @@ type Kv struct {
 	entries map[string]*entry
 	hooks   map[string][]func([]byte) error
 
+	// watched marks whether this Kv is attached to a live Watcher. The
+	// negative cache is only sound with one: without watch events to flip a
+	// cached miss, it would report not-found forever.
+	watched atomic.Bool
+
 	mu     sync.RWMutex
 	client *clientv3.Client
 	logger contract.Logger
@@ -46,6 +52,13 @@ func NewKv(prefix string, client *clientv3.Client) *Kv {
 
 func (k *Kv) SetLogger(logger contract.Logger) *Kv {
 	k.logger = logger
+	return k
+}
+
+// SetWatched marks this Kv as attached to a live Watcher. It gates the
+// negative cache: a cached miss can only be healed by a watch event.
+func (k *Kv) SetWatched() *Kv {
+	k.watched.Store(true)
 	return k
 }
 
@@ -87,6 +100,12 @@ func (k *Kv) Preload(ctx context.Context) error {
 
 // OnKeyChange registers a hook function to be called when the key changes.
 // the key removed from etcd will not trigger the hook.
+// NOTE: only keys already tracked by this Kv receive change notifications:
+// keys loaded via Get/GetString (a not-found Get also counts), or via Preload.
+// Events on never-accessed keys are ignored; access the key once or call
+// Preload before relying on the hook.
+// The hook list is append-only: Handle snapshots it without copying, so
+// removing or replacing hooks in place would break that snapshot.
 func (k *Kv) OnKeyChange(key string, hook func([]byte) error) bool {
 	key = k.cacheKey(key)
 
@@ -109,29 +128,13 @@ func (k *Kv) GetString(ctx context.Context, key string) (string, error) {
 		return "", ErrNotFound
 	}
 
-	realKey := k.etcdKey(key)
-	b, err := k.GetNoCache(ctx, realKey)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			// cached an entry with contentExists=false, to avoid request etcd
-			k.cacheNilWhenNotFound(cacheKey)
-		}
-		return "", err
-	}
-
-	value = string(b)
-
-	k.mu.Lock()
-	_, ok := k.entries[cacheKey]
-	if !ok {
-		k.entries[cacheKey] = &entry{value: value, exists: true}
-	}
-	k.mu.Unlock()
-
-	return value, nil
+	value, _, err := k.getAndCache(ctx, key, cacheKey)
+	return value, err
 }
 
 // Get gets the value of the key.
+// The value is cached on first read. Updates are picked up only when the Kv
+// is watched (see SetWatched); otherwise use GetNoCache for fresh values.
 func (k *Kv) Get(ctx context.Context, key string) ([]byte, error) {
 	cacheKey := k.cacheKey(key)
 	value, cached, exists := k.getStringFromCache(cacheKey)
@@ -143,18 +146,8 @@ func (k *Kv) Get(ctx context.Context, key string) ([]byte, error) {
 		return nil, ErrNotFound
 	}
 
-	realKey := k.etcdKey(key)
-	b, err := k.GetNoCache(ctx, realKey)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			// cached an entry with contentExists=false, to avoid request etcd
-			k.cacheNilWhenNotFound(cacheKey)
-		}
-		return nil, err
-	}
-
-	k.cacheWhenNotFound(cacheKey, b)
-	return b, nil
+	_, b, err := k.getAndCache(ctx, key, cacheKey)
+	return b, err
 }
 
 // UnsafeGet gets the value of the key.
@@ -170,18 +163,35 @@ func (k *Kv) UnsafeGet(ctx context.Context, key string) ([]byte, error) {
 		return nil, ErrNotFound
 	}
 
-	realKey := k.etcdKey(key)
-	b, err := k.GetNoCache(ctx, realKey)
+	value, _, err := k.getAndCache(ctx, key, cacheKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return strz.UnsafeBytes(value), nil
+}
+
+// getAndCache fetches the key from etcd and caches it. It returns both the
+// cached string and the raw bytes so callers convert without an extra copy:
+// exactly one string(b) conversion happens, for the cache.
+func (k *Kv) getAndCache(ctx context.Context, key, cacheKey string) (string, []byte, error) {
+	b, err := k.GetNoCache(ctx, k.etcdKey(key))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			// cached an entry with contentExists=false, to avoid request etcd
 			k.cacheNilWhenNotFound(cacheKey)
 		}
-		return nil, err
+		return "", nil, err
 	}
 
-	k.cacheWhenNotFound(cacheKey, b)
-	return b, nil
+	value := string(b)
+	k.mu.Lock()
+	if _, ok := k.entries[cacheKey]; !ok {
+		k.entries[cacheKey] = &entry{value: value, exists: true}
+	}
+	k.mu.Unlock()
+
+	return value, b, nil
 }
 
 // GetNoCache gets the value of the key without using the cache.
@@ -228,18 +238,26 @@ func (k *Kv) Handle(event *clientv3.Event) {
 			e.value = string(event.Kv.Value)
 			e.exists = true
 		}
+
+		// slice-header snapshot only: OnKeyChange appends under k.mu, so later
+		// registrations stay invisible to this snapshot without copying
+		var hooks []func([]byte) error
+		if diff {
+			hooks = k.hooks[key]
+		}
 		k.mu.Unlock()
 
-		if diff {
-			k.logger.Debugf("key %s changed", key)
+		if !diff {
+			return
+		}
 
-			k.mu.RLock()
-			for _, hook := range k.hooks[key] {
-				if err := hook(event.Kv.Value); err != nil {
-					k.logger.Warnf("key %s hook failed: %s", key, err.Error())
-				}
+		k.logger.Debugf("key %s changed", key)
+
+		// hooks run without k.mu held, so they may call Get/OnKeyChange
+		for _, hook := range hooks {
+			if err := hook(event.Kv.Value); err != nil {
+				k.logger.Warnf("key %s hook failed: %s", key, err.Error())
 			}
-			k.mu.RUnlock()
 		}
 	case clientv3.EventTypeDelete:
 		k.mu.Lock()
@@ -267,9 +285,15 @@ func (k *Kv) getStringFromCache(key string) (value string, cached, exists bool) 
 }
 
 // cacheNilWhenNotFound caches an entry with exists=false when key not found in cache, to avoid request etcd.
+// Skipped when the Kv is not watched: without events there is no way to flip
+// the cached miss, so it would stick forever.
 // if return true, means the key not exists in the cache and cached successfully.
-// if return false, means the key exists in the cache and cached failed.
+// if return false, means the key exists in the cache or caching is skipped.
 func (k *Kv) cacheNilWhenNotFound(key string) bool {
+	if !k.watched.Load() {
+		return false
+	}
+
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
@@ -279,20 +303,6 @@ func (k *Kv) cacheNilWhenNotFound(key string) bool {
 	}
 
 	k.entries[key] = &entry{}
-	return true
-}
-
-// cacheWhenNotFound caches an entry when key not found in cache.
-func (k *Kv) cacheWhenNotFound(key string, value []byte) bool {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-
-	_, ok := k.entries[key]
-	if ok {
-		return false
-	}
-
-	k.entries[key] = &entry{value: string(value), exists: true}
 	return true
 }
 

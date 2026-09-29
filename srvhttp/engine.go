@@ -1,12 +1,15 @@
 package srvhttp
 
 import (
+	"fmt"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/welllog/golt/contract"
+	"github.com/welllog/golt/unierr"
 	"github.com/welllog/olog"
 )
 
@@ -82,6 +85,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	e.r.ServeHTTP(w, req)
 }
 
+// PrintRoutes logs the registered routes at debug level.
 func (e *Engine) PrintRoutes() {
 	_ = e.r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		pathTemplate, _ := route.GetPathTemplate()
@@ -142,28 +146,35 @@ func (e *Engine) loadMustMiddlewares() {
 }
 
 func (e *Engine) middlewareOne() mux.MiddlewareFunc {
-	if e.debug {
-		return func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				start := time.Now()
-				ctx := NewContext(writer, request)
-				next.ServeHTTP(ctx, ctx.Request)
-
-				if !ctx.Written() {
-					e.rspFunc(ctx.rsp, ctx.err, ctx)
-				}
-				e.requestDebug(ctx.status, time.Since(start), request, ctx.err)
-			})
-		}
-	}
-
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			start := time.Now()
 			ctx := NewContext(writer, request)
+
+			// registered first, so it also guards the response writing below
+			defer func() {
+				if r := recover(); r != nil {
+					e.logger.Errorf("panic: %v\n%s", r, debug.Stack())
+
+					// the connection may already be written or hijacked
+					if !ctx.Written() {
+						msg := "internal server error"
+						if e.debug {
+							msg = fmt.Sprint(r)
+						}
+						ue := unierr.New(unierr.Internal, msg).SetHttpCode(http.StatusInternalServerError)
+						e.rspFunc(nil, ue, ctx)
+					}
+				}
+			}()
+
 			next.ServeHTTP(ctx, ctx.Request)
 
 			if !ctx.Written() {
 				e.rspFunc(ctx.rsp, ctx.err, ctx)
+			}
+			if e.debug {
+				e.requestDebug(ctx.status, time.Since(start), request, ctx.err)
 			}
 		})
 	}

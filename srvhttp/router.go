@@ -3,6 +3,7 @@ package srvhttp
 import (
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/gorilla/mux"
 )
@@ -42,6 +43,24 @@ func (r Router) Use(mds ...Middleware) {
 			}
 
 			ctx.rsp, ctx.err = chainHandler(ctx)
+		})
+	})
+}
+
+// UseStd registers standard http middleware of the form
+// func(http.Handler) http.Handler (otelhttp, promhttp, ...). They run after
+// the engine's own context/recovery middleware, in registration order.
+func (r Router) UseStd(mds ...func(http.Handler) http.Handler) {
+	if len(mds) == 0 {
+		return
+	}
+
+	r.r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			for i := len(mds) - 1; i >= 0; i-- {
+				next = mds[i](next)
+			}
+			next.ServeHTTP(writer, request)
 		})
 	})
 }
@@ -111,17 +130,23 @@ func (r Router) StaticFS(relativePath string, fs http.FileSystem, listFiles bool
 		fs = onlyFilesFS{fs}
 	}
 
-	checkRoute(r.r.PathPrefix(relativePath).Handler(http.StripPrefix(relativePath, http.FileServer(fs))))
+	// trailing slash keeps the prefix from matching sibling paths like /staticfoo
+	prefix := relativePath
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	checkRoute(r.r.PathPrefix(prefix).Handler(http.StripPrefix(relativePath, http.FileServer(fs))))
 }
 
 func (r Router) StaticFile(relativePath, filepath string) {
-	checkRoute(r.r.PathPrefix(relativePath).HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	// exact match: PathPrefix would also serve sibling paths like /svX
+	checkRoute(r.r.HandleFunc(relativePath, func(writer http.ResponseWriter, request *http.Request) {
 		http.ServeFile(writer, request, filepath)
 	}))
 }
 
 func (r Router) StaticFileFS(relativePath, filepath string, fs http.FileSystem) {
-	checkRoute(r.r.PathPrefix(relativePath).HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	checkRoute(r.r.HandleFunc(relativePath, func(writer http.ResponseWriter, request *http.Request) {
 		old := request.URL.Path
 		request.URL.Path = filepath
 		http.FileServer(fs).ServeHTTP(writer, request)

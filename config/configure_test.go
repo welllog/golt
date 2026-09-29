@@ -3,22 +3,51 @@ package config
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/welllog/golib/testz"
 	"github.com/welllog/golt/config/driver"
 	"github.com/welllog/golt/config/driver/etcd"
 	"github.com/welllog/golt/config/meta"
-	"github.com/welllog/golt/contract"
+	"github.com/welllog/olog"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
-
-	"github.com/welllog/golib/testz"
 )
+
+func TestNewConfigure_DuplicateNamespace(t *testing.T) {
+	// duplicate within one source: used to be swallowed by driver construction
+	cfs := []meta.Config{
+		{
+			Source: "file://etc/",
+			Configs: []meta.Rule{
+				{Namespace: "a|b", Path: "test1.yaml"},
+				{Namespace: "b", Path: "test2.json"},
+			},
+		},
+	}
+	_, err := newConfigure(cfs, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "duplicate namespace") {
+		t.Fatalf("want duplicate namespace error, got %v", err)
+	}
+
+	// duplicate across sources
+	cfs = []meta.Config{
+		{Source: "file://etc/", Configs: []meta.Rule{{Namespace: "x", Path: "test1.yaml"}}},
+		{Source: "etcd://127.0.0.1:2379", Configs: []meta.Rule{{Namespace: "x", Path: "/v1/x/"}}},
+	}
+	_, err = newConfigure(cfs, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "duplicate namespace") {
+		t.Fatalf("want duplicate namespace error, got %v", err)
+	}
+}
 
 type addr struct {
 	Province string
@@ -45,11 +74,7 @@ func initConfigure(t *testing.T) *Configure {
 		Watcher: &twt,
 	}
 
-	driver.RegisterDriver("etcd", func(config meta.Config, logger contract.Logger) (driver.Driver, error) {
-		return etcd.NewAdvanced(config, logger, etcd.WithCustomEtcdClient(&c))
-	})
-
-	engine, err := FromFile("./etc/config.yaml")
+	engine, err := FromFile("./etc/config.yaml", WithCustomEtcdClient(&c))
 	testz.Nil(t, err)
 	return engine
 }
@@ -183,11 +208,12 @@ func TestConfigureWatch(t *testing.T) {
 
 	engine := initConfigure(t)
 
-	var num int32
-	engine.OnKeyChange("test/demo1", "name", func(b []byte) error {
-		num++
+	var num atomic.Int32
+	err = engine.OnKeyChange("test/demo1", "name", func(b []byte) error {
+		num.Add(1)
 		return nil
 	})
+	testz.Nil(t, err)
 
 	name, err := engine.String(ctx, "test/demo1", "name")
 	testz.Nil(t, err)
@@ -217,7 +243,70 @@ func TestConfigureWatch(t *testing.T) {
 	testz.Nil(t, err)
 	testz.Equal(t, "demo1", name)
 
-	testz.Equal(t, int32(2), num, "change event should be triggered twice")
+	testz.Equal(t, int32(2), num.Load(), "change event should be triggered twice")
+}
+
+func TestConfigure_ConcurrentNew(t *testing.T) {
+	// used to fatal with concurrent map writes: NewConfigure overwrote the
+	// global driver registry on every call
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			engine, err := FromFile("./etc/config.yaml", WithCustomEtcdClient(&clientv3.Client{
+				KV:      &testKV{},
+				Watcher: &testWatcher{},
+			}))
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			engine.Close()
+		}()
+	}
+	wg.Wait()
+}
+
+func TestConfigure_OnKeyChangeInHook(t *testing.T) {
+	engine := initConfigure(t)
+
+	f, err := os.OpenFile("./etc/test1.yaml", os.O_RDWR, 0666)
+	testz.Nil(t, err)
+	defer f.Close()
+
+	b, err := io.ReadAll(f)
+	testz.Nil(t, err)
+
+	completed := make(chan struct{})
+	var once sync.Once
+	err = engine.OnKeyChange("test/demo1", "name", func(b []byte) error {
+		// used to deadlock: hooks ran under the driver's read lock
+		once.Do(func() {
+			_ = engine.OnKeyChange("test/demo1", "no", func(b []byte) error { return nil })
+			close(completed)
+		})
+		return nil
+	})
+	testz.Nil(t, err)
+
+	b2 := bytes.Replace(b, []byte("demo1"), []byte("demo9"), 1)
+	_, err = f.Seek(io.SeekStart, 0)
+	testz.Nil(t, err)
+	_, err = f.Write(b2)
+	testz.Nil(t, err)
+
+	select {
+	case <-completed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("hook calling OnKeyChange deadlocked")
+	}
+
+	// restore the file content
+	_, err = f.Seek(io.SeekStart, 0)
+	testz.Nil(t, err)
+	_, err = f.Write(b)
+	testz.Nil(t, err)
 }
 
 type testKV struct {
@@ -368,4 +457,57 @@ func (t *testWatcher) RequestProgress(ctx context.Context) error {
 
 func (t *testWatcher) Close() error {
 	return nil
+}
+
+func TestConfigure_OnKeyChangeError(t *testing.T) {
+	engine := initConfigure(t)
+
+	hook := func(b []byte) error { return nil }
+
+	err := engine.OnKeyChange("no/such", "k", hook)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+
+	// file source with watch: false
+	err = engine.OnKeyChange("test/demo3", "no_value", hook)
+	if !errors.Is(err, driver.ErrNotWatchable) {
+		t.Fatalf("want ErrNotWatchable, got %v", err)
+	}
+
+	// etcd source with watch: false
+	err = engine.OnKeyChange("test/demo5", "baz", hook)
+	if !errors.Is(err, driver.ErrNotWatchable) {
+		t.Fatalf("want ErrNotWatchable, got %v", err)
+	}
+}
+
+func TestEtcdDriver_OnKeyChangeNoWatcher(t *testing.T) {
+	// all etcd rules have watch:false, so the watcher is nil; OnKeyChange
+	// used to panic on a nil dereference here
+	d, err := etcd.NewAdvanced(meta.Config{
+		Source:  "etcd://127.0.0.1:2379",
+		Configs: []meta.Rule{{Namespace: "test/demo5", Path: "/v1/test/demo5/"}},
+	}, olog.DynamicLogger{}, etcd.WithCustomEtcdClient(&clientv3.Client{
+		KV:      &testKV{},
+		Watcher: &testWatcher{},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	err = d.OnKeyChange("test/demo5", "baz", func(b []byte) error { return nil })
+	if !errors.Is(err, driver.ErrNotWatchable) {
+		t.Fatalf("want ErrNotWatchable, got %v", err)
+	}
+}
+
+func TestConfigure_Namespaces(t *testing.T) {
+	engine := initConfigure(t)
+	defer engine.Close()
+
+	testz.Equal(t, []string{
+		"test/demo1", "test/demo2", "test/demo3", "test/demo4", "test/demo5",
+	}, engine.Namespaces())
 }

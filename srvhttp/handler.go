@@ -24,8 +24,11 @@ func defResponseFunc(response any, err error, c *Context) {
 
 		c.Header().Set("Content-Type", "application/json; charset=utf-8")
 		c.WriteHeader(ue.HttpCode())
-		b, _ := ue.MarshalJSON()
-		_, _ = c.Write(b)
+		if b, mErr := ue.MarshalJSON(); mErr == nil {
+			_, _ = c.Write(b)
+		} else {
+			writeEncodeFallback(c, mErr)
+		}
 		return
 	}
 
@@ -38,7 +41,10 @@ func defResponseFunc(response any, err error, c *Context) {
 	buf.Grow(128)
 
 	buf.WriteString(`{"data":`)
-	_ = json.NewEncoder(&buf).Encode(response)
+	if encErr := json.NewEncoder(&buf).Encode(response); encErr != nil {
+		writeEncodeFallback(c, encErr)
+		return
+	}
 	b := buf.Bytes()
 	if b[len(b)-1] == '\n' {
 		b = b[:len(b)-1]
@@ -47,5 +53,15 @@ func defResponseFunc(response any, err error, c *Context) {
 
 	c.Header().Set("Content-Type", "application/json; charset=utf-8")
 	c.WriteHeader(200)
+	_, _ = c.Write(b)
+}
+
+// writeEncodeFallback reports an encoding failure as a 500 JSON error instead
+// of emitting broken JSON with a success status.
+func writeEncodeFallback(c *Context, err error) {
+	ue := unierr.New(unierr.Internal, "response encode failed").SetHttpCode(http.StatusInternalServerError)
+	c.Header().Set("Content-Type", "application/json; charset=utf-8")
+	c.WriteHeader(ue.HttpCode())
+	b, _ := ue.MarshalJSON()
 	_, _ = c.Write(b)
 }

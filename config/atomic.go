@@ -29,7 +29,10 @@ func AtomicStore(ctx context.Context, cfg *Configure, namespace, key string, dst
 	return nil
 }
 
-func AtomicLoad(src any) unsafe.Pointer {
-	val := reflect.ValueOf(src)
-	return atomic.LoadPointer((*unsafe.Pointer)(val.UnsafePointer()))
+// AtomicLoad atomically loads a pointer field that is updated concurrently,
+// e.g. a watch field of InitAndPreload or a value stored by AtomicStore.
+// field is the address of the pointer field, like &c.field. Plain reads of such
+// fields are data races. The result may be nil if the field is not loaded yet.
+func AtomicLoad[T any](field **T) *T {
+	return (*T)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(field))))
 }

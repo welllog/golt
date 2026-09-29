@@ -22,8 +22,16 @@ type FieldLazyLoadMap map[unsafe.Pointer]func() error
 // For exported fields, the configuration value is directly set to the field.
 // For unexported fields, if the field is not a pointer, the configuration value is directly set to the field using unsafe.
 // For unexported pointer fields, if the lazy option is not set, the configuration value is loaded and set to the field using unsafe.
+// fieldLoadTimeout bounds each field load; a non-positive value means no timeout.
 // If the lazy option is set for an unexported pointer field, a lazy load function is returned in the map.
 // If the watch option is set for an unexported pointer field, a callback function is registered to update the field when the configuration changes.
+// Fields with watch:true are updated concurrently and MUST be read atomically,
+// e.g. AtomicLoad(&c.field); plain reads are data races. Fields without
+// watch can be read directly after InitAndPreload (or TryLoad for lazy fields) returns.
+// Note: with the etcd driver (no preload), the watch callback only takes effect after the key
+// has been accessed once; for a lazy field this happens on the first TryLoad, so changes made
+// before that are not picked up. Access the key during startup or enable WithEtcdPreload if
+// this matters.
 func (c *Configure) InitAndPreload(dst any, fieldLoadTimeout time.Duration) (FieldLazyLoadMap, error) {
 	begin := time.Now()
 
@@ -103,12 +111,22 @@ func (c *Configure) TryLoad(fieldPtr unsafe.Pointer, funcs FieldLazyLoadMap) (un
 	return ptr, nil
 }
 
+// loadContext returns a context for a field load. A non-positive timeout
+// means no timeout, matching the zero-value convention of the rest of the lib
+// (context.WithTimeout would expire immediately for d <= 0).
+func loadContext(timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout > 0 {
+		return context.WithTimeout(context.Background(), timeout)
+	}
+	return context.Background(), func() {}
+}
+
 func (c *Configure) loadExportedField(field reflect.StructField, fieldValue reflect.Value, ct configTag, loadTimeout time.Duration) error {
 	if ct.Lazy || ct.Watch {
 		c.logger.Warnf("Field %s is exported, lazy/watch options are ignored", field.Name)
 	}
 
-	loadCtx, loadCancel := context.WithTimeout(context.Background(), loadTimeout)
+	loadCtx, loadCancel := loadContext(loadTimeout)
 	if field.Type.Kind() == reflect.Ptr {
 		ptrValue := reflect.New(field.Type.Elem())
 		err := c.Decode(loadCtx, ct.Namespace, ct.Key, ptrValue.Interface(), driver.GetDecoderOrDefault(ct.Format))
@@ -134,7 +152,7 @@ func (c *Configure) loadUnexportedNotPtrField(field reflect.StructField, fieldVa
 	}
 
 	dst := reflect.NewAt(field.Type, unsafe.Pointer(fieldValue.UnsafeAddr())).Interface()
-	loadCtx, loadCancel := context.WithTimeout(context.Background(), loadTimeout)
+	loadCtx, loadCancel := loadContext(loadTimeout)
 	err := c.Decode(loadCtx, ct.Namespace, ct.Key, dst, driver.GetDecoderOrDefault(ct.Format))
 	loadCancel()
 	if err != nil {
@@ -147,7 +165,7 @@ func (c *Configure) handleLazyOrWatchedField(field reflect.StructField, fieldVal
 	fieldPtr := fieldValue.Addr().UnsafePointer()
 	fieldType := field.Type.Elem()
 	if ct.Watch {
-		callbackOk := c.OnKeyChange(ct.Namespace, ct.Key, func(b []byte) error {
+		callbackErr := c.OnKeyChange(ct.Namespace, ct.Key, func(b []byte) error {
 			ptrValue := reflect.New(fieldType)
 			fn := driver.GetDecoderOrDefault(ct.Format)
 			err := fn(b, ptrValue.Interface())
@@ -158,14 +176,13 @@ func (c *Configure) handleLazyOrWatchedField(field reflect.StructField, fieldVal
 			atomic.StorePointer((*unsafe.Pointer)(fieldPtr), ptrValue.UnsafePointer())
 			return nil
 		})
-
-		if !callbackOk {
-			return fmt.Errorf("key: %s %s not watchable but %s is watched", ct.Namespace, ct.Key, field.Name)
+		if callbackErr != nil {
+			return fmt.Errorf("field %s: %w", field.Name, callbackErr)
 		}
 	}
 
 	loadFunc := func() error {
-		loadCtx, loadCancel := context.WithTimeout(context.Background(), loadTimeout)
+		loadCtx, loadCancel := loadContext(loadTimeout)
 		ptrValue := reflect.New(fieldType)
 		err := c.Decode(loadCtx, ct.Namespace, ct.Key, ptrValue.Interface(), driver.GetDecoderOrDefault(ct.Format))
 		loadCancel()

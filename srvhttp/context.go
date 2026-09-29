@@ -78,18 +78,30 @@ func (c *Context) PathParams() map[string]string {
 
 // RouteName returns the name of the route matched for the current request, if any.
 func (c *Context) RouteName() string {
-	return mux.CurrentRoute(c.Request).GetName()
+	route := mux.CurrentRoute(c.Request)
+	if route == nil {
+		return ""
+	}
+	return route.GetName()
 }
 
 // PathTemplate returns the path template used to match the current request, if any.
 func (c *Context) PathTemplate() string {
-	tpl, _ := mux.CurrentRoute(c.Request).GetPathTemplate()
+	route := mux.CurrentRoute(c.Request)
+	if route == nil {
+		return ""
+	}
+	tpl, _ := route.GetPathTemplate()
 	return tpl
 }
 
 // PathRegex returns the path regex used to match the current request, if any.
 func (c *Context) PathRegex() string {
-	rgx, _ := mux.CurrentRoute(c.Request).GetPathRegexp()
+	route := mux.CurrentRoute(c.Request)
+	if route == nil {
+		return ""
+	}
+	rgx, _ := route.GetPathRegexp()
 	return rgx
 }
 
@@ -136,12 +148,19 @@ func (c *Context) Written() bool {
 }
 
 // Hijack implements the http.Hijacker interface to allow an HTTP handler to take over the connection.
+// After a successful hijack the status is marked as StatusSwitchingProtocols,
+// so the engine skips its fallback response writing on the hijacked connection.
 func (c *Context) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	hijacker, ok := c.responseWriter.(http.Hijacker)
 	if !ok {
 		return nil, nil, errors.New("the ResponseWriter doesn't support the Hijacker interface")
 	}
-	return hijacker.Hijack()
+
+	conn, rw, err := hijacker.Hijack()
+	if err == nil {
+		c.status = http.StatusSwitchingProtocols
+	}
+	return conn, rw, err
 }
 
 // Flush implements the http.Flusher interface to allow an HTTP handler to flush buffered data to the client.

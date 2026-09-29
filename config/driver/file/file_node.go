@@ -4,7 +4,7 @@ import (
 	"bytes"
 
 	"github.com/welllog/golib/strz"
-	"github.com/welllog/golt/contract"
+	"github.com/welllog/golt/config/driver"
 )
 
 type entry struct {
@@ -71,9 +71,9 @@ func (n *fileNode) CacheFrom(fields map[string]*field) {
 
 // OnKeyChange registers a hook function that will be executed when the value of the key is updated.
 // the key removed will not be executed.
-func (n *fileNode) OnKeyChange(key string, hook func([]byte) error) bool {
+func (n *fileNode) OnKeyChange(key string, hook func([]byte) error) error {
 	if !n.watch {
-		return false
+		return driver.ErrNotWatchable
 	}
 
 	e, ok := n.entries[key]
@@ -83,31 +83,38 @@ func (n *fileNode) OnKeyChange(key string, hook func([]byte) error) bool {
 	}
 
 	e.hooks = append(e.hooks, hook)
-	return true
+	return nil
 }
 
-// ExecuteHook executes the hook functions of the keys.
-func (n *fileNode) ExecuteHook(fields map[string]*field, logger contract.Logger) {
+// pendingHook is a collected hook execution: run it after releasing the driver lock.
+type pendingHook struct {
+	key   string
+	value []byte
+	hooks []func([]byte) error
+}
+
+// CollectHooks collects the hook executions pending for the keys in fields
+// and clears their hook flags. It must run with the driver write lock held;
+// execute the returned hooks only after releasing the lock. dst is reused to
+// avoid allocating per refresh. The hooks slices are snapshots, not copies:
+// OnKeyChange only appends, so concurrent registrations stay invisible.
+func (n *fileNode) CollectHooks(fields map[string]*field, dst []pendingHook) []pendingHook {
 	for k, v := range fields {
 		e, ok := n.entries[k]
-		if ok {
-			if e.hookFlag && len(e.hooks) > 0 {
-				var value []byte
-				if v != nil {
-					value = v.value
-				}
-
-				logger.Debugf("key %s changed", k)
-				for _, hook := range e.hooks {
-					if err := hook(value); err != nil {
-						logger.Warnf("key %s hook failed: %s", k, err.Error())
-					}
-				}
-			}
-
-			e.hookFlag = false
+		if !ok || !e.hookFlag || len(e.hooks) == 0 {
+			continue
 		}
+
+		var value []byte
+		if v != nil {
+			value = v.value
+		}
+
+		e.hookFlag = false
+		dst = append(dst, pendingHook{key: k, value: value, hooks: e.hooks})
 	}
+
+	return dst
 }
 
 // UnsafeGet returns the value of the key.

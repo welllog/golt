@@ -51,7 +51,7 @@ func ExampleEngine_ServeHTTP_two() {
 func ExampleEngine_ServeHTTP_three() {
 	engine := New()
 	engine.POST("/test3", func(c *Context) (any, error) {
-		return nil, unierr.New(1000, "test error").WithData(map[string]int{"reason": 20})
+		return nil, unierr.New(1000, "test error").SetData(map[string]int{"reason": 20})
 	})
 
 	srv := httptest.NewServer(engine)
