@@ -51,7 +51,9 @@ func NewKv(prefix string, client *clientv3.Client) *Kv {
 }
 
 func (k *Kv) SetLogger(logger contract.Logger) *Kv {
-	k.logger = logger
+	if logger != nil {
+		k.logger = logger
+	}
 	return k
 }
 

@@ -48,7 +48,9 @@ func (w *Watcher) SetCommonPrefixMinLen(l int) *Watcher {
 }
 
 func (w *Watcher) SetLogger(logger contract.Logger) *Watcher {
-	w.logger = logger
+	if logger != nil {
+		w.logger = logger
+	}
 	return w
 }
 

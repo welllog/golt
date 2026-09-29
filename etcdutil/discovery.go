@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"sync/atomic"
 	"time"
 
-	"github.com/welllog/golib/strz"
 	"github.com/welllog/golt/contract"
 	"github.com/welllog/olog"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -20,6 +20,7 @@ type Discovery struct {
 	hosts   atomic.Pointer[[]string]
 	n       atomic.Uint32
 	logger  contract.Logger
+	entries map[string]string // key -> host, sequentially maintained by the watch goroutine
 }
 
 // NewDiscovery creates a new Discovery instance without watching for changes.
@@ -39,9 +40,9 @@ func NewDiscovery(etcd *clientv3.Client, serviceName string, logger contract.Log
 	d := &Discovery{
 		service: serviceName,
 		logger:  logger,
+		entries: make(map[string]string, len(resp.Kvs)),
 	}
 
-	hosts := make([]string, 0, len(resp.Kvs))
 	for _, kv := range resp.Kvs {
 		v := string(kv.Value)
 		_, _, err = net.SplitHostPort(v)
@@ -50,28 +51,28 @@ func NewDiscovery(etcd *clientv3.Client, serviceName string, logger contract.Log
 			continue
 		}
 
-		hosts = append(hosts, v)
+		d.entries[string(kv.Key)] = v
 	}
-	d.hosts.Store(&hosts)
+	d.rebuildHosts()
 
 	return d, nil
 }
 
-// NewDiscoveryWithWatch creates a new Discovery instance and starts watching for changes.
+// NewDiscoveryWithWatch creates a new Discovery instance and starts watching for changes
+// with automatic reconnection and revision resumption via Watcher.
 func NewDiscoveryWithWatch(ctx context.Context, etcd *clientv3.Client, serviceName string, logger contract.Logger) (*Discovery, error) {
+	if logger == nil {
+		logger = olog.DynamicLogger{}
+	}
+
 	d, err := NewDiscovery(etcd, serviceName, logger)
 	if err != nil {
 		return nil, err
 	}
 
-	ch := etcd.Watch(ctx, serviceName, clientv3.WithPrefix(), clientv3.WithPrevKV())
-	go func(ch clientv3.WatchChan) {
-		for rsp := range ch {
-			for _, ev := range rsp.Events {
-				d.Handle(ev)
-			}
-		}
-	}(ch)
+	watcher := NewWatcher(etcd).SetLogger(logger)
+	watcher.Attach(d)
+	watcher.Run(ctx)
 
 	return d, nil
 }
@@ -106,6 +107,7 @@ func (d *Discovery) Prefix() string {
 }
 
 func (d *Discovery) Handle(ev *clientv3.Event) {
+	key := string(ev.Kv.Key)
 	switch ev.Type {
 	case clientv3.EventTypePut:
 		host := string(ev.Kv.Value)
@@ -113,53 +115,40 @@ func (d *Discovery) Handle(ev *clientv3.Event) {
 			d.logger.Warnf("[Handle] %s invalid host: %s, err: %v", d.service, host, err)
 			return
 		}
-		d.add(host)
+
+		if old, ok := d.entries[key]; ok && old == host {
+			return
+		}
+		d.entries[key] = host
+		d.rebuildHosts()
+		d.logger.Infof("[Discovery] %s add host: %s", d.service, host)
+
 	case clientv3.EventTypeDelete:
-		if ev.PrevKv == nil {
-			d.logger.Warnf("[Handle] %s delete event with no prev kv", d.service)
+		host, ok := d.entries[key]
+		if !ok {
 			return
 		}
-		d.del(strz.UnsafeString(ev.PrevKv.Value))
+		delete(d.entries, key)
+		d.rebuildHosts()
+		d.logger.Infof("[Discovery] %s del host: %s", d.service, host)
 	}
 }
 
-func (d *Discovery) add(host string) {
-	p := d.hosts.Load()
-
-	for _, a := range *p {
-		if a == host {
-			return
-		}
-	}
-
-	newHosts := make([]string, len(*p)+1)
-	copy(newHosts, *p)
-	newHosts[len(*p)] = host
-	d.hosts.Store(&newHosts)
-	d.logger.Infof("[Discovery] %s add host: %s", d.service, host)
-}
-
-func (d *Discovery) del(host string) {
-	p := d.hosts.Load()
-
-	idx := -1
-	for i, a := range *p {
-		if a == host {
-			idx = i
-			break
-		}
-	}
-	if idx == -1 {
+func (d *Discovery) rebuildHosts() {
+	if len(d.entries) == 0 {
+		empty := make([]string, 0)
+		d.hosts.Store(&empty)
 		return
 	}
 
-	if len(*p) == 1 {
-		d.hosts.Store(&[]string{})
-	} else {
-		newHosts := make([]string, len(*p)-1)
-		copy(newHosts, (*p)[:idx])
-		copy(newHosts[idx:], (*p)[idx+1:])
-		d.hosts.Store(&newHosts)
+	set := make(map[string]struct{}, len(d.entries))
+	hosts := make([]string, 0, len(d.entries))
+	for _, host := range d.entries {
+		if _, ok := set[host]; !ok {
+			set[host] = struct{}{}
+			hosts = append(hosts, host)
+		}
 	}
-	d.logger.Infof("[Discovery] %s del host: %s", d.service, host)
+	slices.Sort(hosts)
+	d.hosts.Store(&hosts)
 }
