@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,7 +28,13 @@ type RegistrarConfig struct {
 	OpTimeout     time.Duration
 	MaxBackoff    time.Duration
 	Logger        contract.Logger
-	IfaceName     string
+	// IfaceName specifies the network interface to take the registered IP from.
+	// If set but the interface does not exist or has no usable IP, registration
+	// fails loudly instead of silently falling back to another address.
+	IfaceName string
+	// ServiceIP explicitly overrides the registered IP. It must be a valid IPv4
+	// address; an invalid value is rejected at registration time.
+	ServiceIP string
 }
 
 type Registrar struct {
@@ -68,15 +75,7 @@ func NewRegister(etcd *clientv3.Client, cfg RegistrarConfig) *Registrar {
 // RegisterService registers the service with etcd using a lease for TTL.
 // ctx cancel or DeregisterService will stop the automatic refresh of the registration.
 func (r *Registrar) RegisterService(ctx context.Context, serviceName string, port int) (string, error) {
-	var (
-		ip  string
-		err error
-	)
-	if r.config.IfaceName == "" {
-		ip, err = GetLocalIP()
-	} else {
-		ip, err = GetLocalIPByName(r.config.IfaceName)
-	}
+	ip, err := r.getServiceIP()
 	if err != nil {
 		return "", fmt.Errorf("[RegisterService] register %s failed on get ip: %w", serviceName, err)
 	}
@@ -191,17 +190,163 @@ func (r *Registrar) register(ctx context.Context, key, host string) (clientv3.Le
 	return leaseRsp.ID, nil
 }
 
+func (r *Registrar) getServiceIP() (string, error) {
+	if r.config.ServiceIP != "" {
+		if ip := net.ParseIP(r.config.ServiceIP); ip == nil || ip.To4() == nil {
+			return "", fmt.Errorf("invalid ServiceIP %q: must be an IPv4 address", r.config.ServiceIP)
+		}
+		return r.config.ServiceIP, nil
+	}
+
+	if r.config.IfaceName != "" {
+		return GetLocalIPByName(r.config.IfaceName)
+	}
+
+	// Probe the route to each etcd endpoint (1s timeout each, serial) so the
+	// registered IP is the one that can actually reach etcd.
+	for _, ep := range safeEndpoints(r.etcd) {
+		if ip, err := GetOutboundIP(ep); err == nil {
+			parsedIP := net.ParseIP(ip)
+			if parsedIP != nil && !parsedIP.IsLoopback() {
+				return ip, nil
+			}
+		}
+	}
+
+	if ip, err := GetOutboundIP(); err == nil {
+		parsedIP := net.ParseIP(ip)
+		if parsedIP != nil && !parsedIP.IsLoopback() {
+			return ip, nil
+		}
+	}
+
+	return GetLocalIP()
+}
+
+func safeEndpoints(c *clientv3.Client) []string {
+	if c == nil {
+		return nil
+	}
+	return c.Endpoints()
+}
+
+// GetOutboundIP determines the outbound IPv4 address by probing the route to a target address.
+// If target is omitted, it defaults to "8.8.8.8:80".
+func GetOutboundIP(target ...string) (string, error) {
+	dst := "8.8.8.8:80"
+	if len(target) > 0 && target[0] != "" {
+		dst = target[0]
+	}
+	return getOutboundIP(dst)
+}
+
+func getOutboundIP(target string) (string, error) {
+	target = strings.TrimPrefix(target, "http://")
+	target = strings.TrimPrefix(target, "https://")
+	if idx := strings.IndexByte(target, '/'); idx != -1 {
+		target = target[:idx]
+	}
+
+	host, _, err := net.SplitHostPort(target)
+	if err != nil {
+		target = net.JoinHostPort(target, "80")
+	} else if host == "" {
+		return "", errors.New("invalid target: empty host")
+	}
+
+	conn, err := net.DialTimeout("udp", target, time.Second)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	localAddr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok || localAddr.IP == nil {
+		return "", errors.New("cannot determine outbound ip")
+	}
+
+	ipv4 := localAddr.IP.To4()
+	if ipv4 == nil {
+		return "", errors.New("outbound ip is not ipv4")
+	}
+
+	return ipv4.String(), nil
+}
+
+var virtualInterfacePrefixes = []string{
+	"docker", "veth", "br-", "cni", "flannel", "calico", "tun", "utun", "tap", "wg",
+}
+
+func isVirtualInterface(name string) bool {
+	for _, prefix := range virtualInterfacePrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func GetLocalIP() (string, error) {
-	addrs, err := net.InterfaceAddrs()
+	interfaces, err := net.Interfaces()
 	if err != nil {
 		return "", err
 	}
 
-	for _, address := range addrs {
-		// Check the address type and loopback status
-		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String(), nil
+	var fallbackIP string
+
+	// Pass 1: Look for private IPv4 on active, non-virtual, non-loopback interfaces
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if isVirtualInterface(iface.Name) {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok || ipnet.IP.IsLoopback() {
+				continue
+			}
+
+			ipv4 := ipnet.IP.To4()
+			if ipv4 == nil {
+				continue
+			}
+
+			if ipv4.IsPrivate() {
+				return ipv4.String(), nil
+			}
+
+			if fallbackIP == "" {
+				fallbackIP = ipv4.String()
+			}
+		}
+	}
+
+	if fallbackIP != "" {
+		return fallbackIP, nil
+	}
+
+	// Pass 2: Fallback to any non-loopback IPv4, including virtual interfaces
+	for _, iface := range interfaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok || ipnet.IP.IsLoopback() {
+				continue
+			}
+			if ipv4 := ipnet.IP.To4(); ipv4 != nil {
+				return ipv4.String(), nil
 			}
 		}
 	}

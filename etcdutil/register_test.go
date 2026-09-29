@@ -2,6 +2,7 @@ package etcdutil
 
 import (
 	"context"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -111,4 +112,110 @@ func TestRegistrar_RegisterAndDeregister(t *testing.T) {
 	// Wait past the retry interval to ensure it does not re-register ("resurrect")
 	time.Sleep(100 * time.Millisecond)
 	testz.Equal(t, int32(1), tl.grantCount.Load(), "should not grant a new lease after deregistration")
+}
+
+func TestGetOutboundIP(t *testing.T) {
+	ip, err := GetOutboundIP()
+	if err == nil {
+		parsed := net.ParseIP(ip)
+		testz.Equal(t, true, parsed != nil)
+		testz.Equal(t, true, parsed.To4() != nil)
+		testz.Equal(t, false, parsed.IsLoopback())
+	}
+
+	ip2, err := GetOutboundIP("8.8.8.8:80")
+	if err == nil {
+		testz.Equal(t, ip, ip2)
+	}
+
+	ip3, err := GetOutboundIP("http://8.8.8.8:80/path")
+	if err == nil {
+		testz.Equal(t, ip, ip3)
+	}
+}
+
+func TestGetLocalIP(t *testing.T) {
+	ip, err := GetLocalIP()
+	if err == nil {
+		parsed := net.ParseIP(ip)
+		testz.Equal(t, true, parsed != nil)
+		testz.Equal(t, true, parsed.To4() != nil)
+		testz.Equal(t, false, parsed.IsLoopback())
+	}
+}
+
+func TestIsVirtualInterface(t *testing.T) {
+	testz.Equal(t, true, isVirtualInterface("docker0"))
+	testz.Equal(t, true, isVirtualInterface("veth1234"))
+	testz.Equal(t, true, isVirtualInterface("br-abcd"))
+	testz.Equal(t, true, isVirtualInterface("cni0"))
+	testz.Equal(t, true, isVirtualInterface("flannel.1"))
+	testz.Equal(t, true, isVirtualInterface("calico123"))
+	testz.Equal(t, true, isVirtualInterface("tun0"))
+	testz.Equal(t, true, isVirtualInterface("utun3"))
+	testz.Equal(t, true, isVirtualInterface("tap0"))
+	testz.Equal(t, true, isVirtualInterface("wg0"))
+	testz.Equal(t, false, isVirtualInterface("eth0"))
+	testz.Equal(t, false, isVirtualInterface("en0"))
+	testz.Equal(t, false, isVirtualInterface("wlan0"))
+}
+
+func TestRegistrar_GetServiceIP(t *testing.T) {
+	// Case 1: ServiceIP explicitly specified
+	r := &Registrar{
+		config: RegistrarConfig{
+			ServiceIP: "192.168.10.99",
+		},
+	}
+	ip, err := r.getServiceIP()
+	testz.Nil(t, err)
+	testz.Equal(t, "192.168.10.99", ip)
+
+	// Case 1b: invalid ServiceIP is rejected
+	r = &Registrar{
+		config: RegistrarConfig{
+			ServiceIP: "not-an-ip",
+		},
+	}
+	_, err = r.getServiceIP()
+	testz.Equal(t, true, err != nil)
+
+	r = &Registrar{
+		config: RegistrarConfig{
+			ServiceIP: "::1",
+		},
+	}
+	_, err = r.getServiceIP()
+	testz.Equal(t, true, err != nil)
+
+	// Case 2: Non-existent IfaceName returns error
+	r = &Registrar{
+		config: RegistrarConfig{
+			IfaceName: "non_existent_interface_xyz_999",
+		},
+	}
+	_, err = r.getServiceIP()
+	testz.Equal(t, true, err != nil)
+
+	// Case 3: Loopback-only interface has no usable IP.
+	// "lo0" is the macOS name, "lo" the Linux one; both must fail.
+	for _, name := range []string{"lo0", "lo"} {
+		r = &Registrar{
+			config: RegistrarConfig{
+				IfaceName: name,
+			},
+		}
+		_, err = r.getServiceIP()
+		testz.Equal(t, true, err != nil, "iface "+name)
+	}
+
+	// Case 4: Default fallback
+	r = &Registrar{}
+	ip, err = r.getServiceIP()
+	if err == nil {
+		parsed := net.ParseIP(ip)
+		testz.Equal(t, true, parsed != nil)
+		testz.Equal(t, true, parsed.To4() != nil)
+		testz.Equal(t, false, parsed.IsLoopback())
+	}
 }
