@@ -511,3 +511,61 @@ func TestConfigure_Namespaces(t *testing.T) {
 		"test/demo1", "test/demo2", "test/demo3", "test/demo4", "test/demo5",
 	}, engine.Namespaces())
 }
+
+func TestConfigure_Defaults(t *testing.T) {
+	engine := initConfigure(t)
+	defer engine.Close()
+
+	ctx := context.Background()
+
+	// Existing keys return configured values
+	testz.Equal(t, "demo1", engine.StringOr(ctx, "test/demo1", "name", "fallback"))
+	testz.Equal(t, 2, engine.IntOr(ctx, "test/demo1", "no", 99))
+	testz.Equal(t, int64(2), engine.Int64Or(ctx, "test/demo1", "no", 99))
+
+	// Missing keys return fallback default values
+	testz.Equal(t, "default_val", engine.StringOr(ctx, "test/demo1", "missing_key", "default_val"))
+	testz.Equal(t, 42, engine.IntOr(ctx, "test/demo1", "missing_key", 42))
+	testz.Equal(t, int64(100), engine.Int64Or(ctx, "test/demo1", "missing_key", 100))
+	testz.Equal(t, 3.14, engine.Float64Or(ctx, "test/demo1", "missing_key", 3.14))
+	testz.Equal(t, true, engine.BoolOr(ctx, "test/demo1", "missing_key", true))
+
+	// Unknown namespace returns fallback default
+	testz.Equal(t, "unknown_ns_def", engine.StringOr(ctx, "unknown_ns", "k", "unknown_ns_def"))
+	testz.Equal(t, 999, engine.IntOr(ctx, "unknown_ns", "k", 999))
+}
+
+func TestConfigure_ScopedNamespace(t *testing.T) {
+	engine := initConfigure(t)
+	defer engine.Close()
+
+	ctx := context.Background()
+	scope := engine.Namespace("test/demo1")
+
+	testz.Equal(t, "test/demo1", scope.Name())
+
+	// Read existing keys via ScopedConfigure
+	s, err := scope.String(ctx, "name")
+	testz.Nil(t, err)
+	testz.Equal(t, "demo1", s)
+
+	n, err := scope.Int(ctx, "no")
+	testz.Nil(t, err)
+	testz.Equal(t, 2, n)
+
+	// Defaults via ScopedConfigure
+	testz.Equal(t, "demo1", scope.StringOr(ctx, "name", "def"))
+	testz.Equal(t, "fallback", scope.StringOr(ctx, "non_existent", "fallback"))
+	testz.Equal(t, 8080, scope.IntOr(ctx, "port", 8080))
+	testz.Equal(t, int64(8080), scope.Int64Or(ctx, "port", 8080))
+	testz.Equal(t, 1.5, scope.Float64Or(ctx, "ratio", 1.5))
+	testz.Equal(t, false, scope.BoolOr(ctx, "enable", false))
+
+	// OnKeyChange via ScopedConfigure
+	var fired atomic.Int32
+	err = scope.OnKeyChange("name", func(b []byte) error {
+		fired.Add(1)
+		return nil
+	})
+	testz.Nil(t, err)
+}

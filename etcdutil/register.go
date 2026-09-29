@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/welllog/golib/randz"
@@ -30,8 +31,10 @@ type RegistrarConfig struct {
 }
 
 type Registrar struct {
-	etcd   *clientv3.Client
-	config RegistrarConfig
+	etcd    *clientv3.Client
+	config  RegistrarConfig
+	mu      sync.Mutex
+	cancels map[string]context.CancelFunc
 }
 
 func NewRegister(etcd *clientv3.Client, cfg RegistrarConfig) *Registrar {
@@ -56,13 +59,14 @@ func NewRegister(etcd *clientv3.Client, cfg RegistrarConfig) *Registrar {
 	}
 
 	return &Registrar{
-		etcd:   etcd,
-		config: cfg,
+		etcd:    etcd,
+		config:  cfg,
+		cancels: make(map[string]context.CancelFunc),
 	}
 }
 
-// RegisterService registers the service with etcd using a lease for TTL
-// ctx cancel will stop the automatic refresh of the registration
+// RegisterService registers the service with etcd using a lease for TTL.
+// ctx cancel or DeregisterService will stop the automatic refresh of the registration.
 func (r *Registrar) RegisterService(ctx context.Context, serviceName string, port int) (string, error) {
 	var (
 		ip  string
@@ -88,14 +92,29 @@ func (r *Registrar) RegisterService(ctx context.Context, serviceName string, por
 		return "", fmt.Errorf("[RegisterService] register %s failed on etcd operate: %w", serviceName, err)
 	}
 
-	go r.keepAlive(ctx, key, host, leaseID)
+	keepCtx, keepCancel := context.WithCancel(ctx)
+	r.mu.Lock()
+	if oldCancel, exists := r.cancels[key]; exists {
+		oldCancel()
+	}
+	r.cancels[key] = keepCancel
+	r.mu.Unlock()
+
+	go r.keepAlive(keepCtx, key, host, leaseID)
 
 	return key, nil
 }
 
-// DeregisterService cancels the registration. However, it does not stop the keep-alive;
-// the context used in the RegisterService method needs to be canceled.
+// DeregisterService cancels the registration, stops the background keep-alive task,
+// and removes the key from etcd.
 func (r *Registrar) DeregisterService(registerKey string) error {
+	r.mu.Lock()
+	if cancel, ok := r.cancels[registerKey]; ok {
+		cancel()
+		delete(r.cancels, registerKey)
+	}
+	r.mu.Unlock()
+
 	ctx, cancel := context.WithTimeout(context.Background(), r.config.OpTimeout)
 	defer cancel()
 
@@ -107,6 +126,12 @@ func (r *Registrar) DeregisterService(registerKey string) error {
 }
 
 func (r *Registrar) keepAlive(ctx context.Context, key string, host string, initialLeaseID clientv3.LeaseID) {
+	defer func() {
+		r.mu.Lock()
+		delete(r.cancels, key)
+		r.mu.Unlock()
+	}()
+
 	leaseID := initialLeaseID
 	backoff := r.config.RetryInterval
 

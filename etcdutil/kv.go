@@ -99,11 +99,7 @@ func (k *Kv) Preload(ctx context.Context) error {
 }
 
 // OnKeyChange registers a hook function to be called when the key changes.
-// the key removed from etcd will not trigger the hook.
-// NOTE: only keys already tracked by this Kv receive change notifications:
-// keys loaded via Get/GetString (a not-found Get also counts), or via Preload.
-// Events on never-accessed keys are ignored; access the key once or call
-// Preload before relying on the hook.
+// The key removed from etcd will not trigger the hook.
 // The hook list is append-only: Handle snapshots it without copying, so
 // removing or replacing hooks in place would break that snapshot.
 func (k *Kv) OnKeyChange(key string, hook func([]byte) error) bool {
@@ -228,22 +224,29 @@ func (k *Kv) Handle(event *clientv3.Event) {
 		key := strz.UnsafeString(event.Kv.Key[len(k.prefix):])
 		k.mu.Lock()
 		e, ok := k.entries[key]
-		if !ok {
+		hooks := k.hooks[key]
+		if !ok && len(hooks) == 0 {
 			k.mu.Unlock()
 			return
 		}
 
-		if !e.exists || !bytes.Equal(strz.UnsafeBytes(e.value), event.Kv.Value) {
-			diff = true
-			e.value = string(event.Kv.Value)
-			e.exists = true
+		if ok {
+			if !e.exists || !bytes.Equal(strz.UnsafeBytes(e.value), event.Kv.Value) {
+				diff = true
+				e.value = string(event.Kv.Value)
+				e.exists = true
+			}
+		} else {
+			if event.PrevKv == nil || !bytes.Equal(event.PrevKv.Value, event.Kv.Value) {
+				diff = true
+			}
+			k.entries[key] = &entry{value: string(event.Kv.Value), exists: true}
 		}
 
 		// slice-header snapshot only: OnKeyChange appends under k.mu, so later
 		// registrations stay invisible to this snapshot without copying
-		var hooks []func([]byte) error
-		if diff {
-			hooks = k.hooks[key]
+		if !diff {
+			hooks = nil
 		}
 		k.mu.Unlock()
 

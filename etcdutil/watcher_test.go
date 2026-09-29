@@ -254,6 +254,32 @@ func (t *testWatcher) notifyCreateAtRev(key, value string, rev int64) {
 	t.mu.RUnlock()
 }
 
+func (t *testWatcher) notifyPutWithPrevKv(key, prevVal, newVal string) {
+	wrsp := clientv3.WatchResponse{
+		Events: []*clientv3.Event{
+			{
+				Type: mvccpb.PUT,
+				PrevKv: &mvccpb.KeyValue{
+					Key:   []byte(key),
+					Value: []byte(prevVal),
+				},
+				Kv: &mvccpb.KeyValue{
+					Key:   []byte(key),
+					Value: []byte(newVal),
+				},
+			},
+		},
+	}
+
+	t.mu.RLock()
+	for _, v := range t.chs {
+		if strings.HasPrefix(key, v.key) {
+			v.ch <- wrsp
+		}
+	}
+	t.mu.RUnlock()
+}
+
 func (t *testWatcher) notifyDel(key string) {
 	wrsp := clientv3.WatchResponse{
 		Events: []*clientv3.Event{

@@ -85,7 +85,7 @@ func (d *Discovery) Resolve() (string, error) {
 	if len(*p) == 1 {
 		return (*p)[0], nil
 	} else {
-		idx := int(d.n.Add(1)-1) % len(*p)
+		idx := int((d.n.Add(1) - 1) % uint32(len(*p)))
 		return (*p)[idx], nil
 	}
 }

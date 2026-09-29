@@ -28,10 +28,8 @@ type FieldLazyLoadMap map[unsafe.Pointer]func() error
 // Fields with watch:true are updated concurrently and MUST be read atomically,
 // e.g. AtomicLoad(&c.field); plain reads are data races. Fields without
 // watch can be read directly after InitAndPreload (or TryLoad for lazy fields) returns.
-// Note: with the etcd driver (no preload), the watch callback only takes effect after the key
-// has been accessed once; for a lazy field this happens on the first TryLoad, so changes made
-// before that are not picked up. Access the key during startup or enable WithEtcdPreload if
-// this matters.
+// Note: lazy and watch are only supported on unexported pointer fields; marking
+// them on exported or non-pointer fields returns an error.
 func (c *Configure) InitAndPreload(dst any, fieldLoadTimeout time.Duration) (FieldLazyLoadMap, error) {
 	begin := time.Now()
 
@@ -80,18 +78,14 @@ func (c *Configure) InitAndPreload(dst any, fieldLoadTimeout time.Duration) (Fie
 	return funcs, nil
 }
 
-// TryLoad attempts to load the configuration value for the field pointed to by fieldPtr.
-// The fieldPtr must be a pointer to an unsafe.Pointer that points to the actual field, and the field must be of pointer type.
-// fieldPtr like this: type User struct { addr *Addr `config:"..."` } -> unsafe.Pointer(&user.addr)
-//
-// If the field is already loaded (i.e., not nil), it returns the current value.
-// If the field is not loaded and a corresponding load function exists in funcs, it invokes the load function to load the value.
-// After invoking the load function, it checks again if the field is loaded and returns the value if successful.
-// If no load function exists or loading fails, it returns an error.
-func (c *Configure) TryLoad(fieldPtr unsafe.Pointer, funcs FieldLazyLoadMap) (unsafe.Pointer, error) {
+// TryLoad atomically loads a lazy field.
+// field is the address of the pointer field, e.g. &c.addr.
+// The result is typed and safe for direct access.
+func TryLoad[T any](field **T, funcs FieldLazyLoadMap) (*T, error) {
+	fieldPtr := unsafe.Pointer(field)
 	ptr := atomic.LoadPointer((*unsafe.Pointer)(fieldPtr))
 	if ptr != nil {
-		return ptr, nil
+		return (*T)(ptr), nil
 	}
 
 	loadFunc, ok := funcs[fieldPtr]
@@ -108,7 +102,7 @@ func (c *Configure) TryLoad(fieldPtr unsafe.Pointer, funcs FieldLazyLoadMap) (un
 	if ptr == nil {
 		return nil, driver.ErrNotFound
 	}
-	return ptr, nil
+	return (*T)(ptr), nil
 }
 
 // loadContext returns a context for a field load. A non-positive timeout
@@ -123,7 +117,7 @@ func loadContext(timeout time.Duration) (context.Context, context.CancelFunc) {
 
 func (c *Configure) loadExportedField(field reflect.StructField, fieldValue reflect.Value, ct configTag, loadTimeout time.Duration) error {
 	if ct.Lazy || ct.Watch {
-		c.logger.Warnf("Field %s is exported, lazy/watch options are ignored", field.Name)
+		return fmt.Errorf("field %s is exported: lazy and watch are only supported on unexported pointer fields", field.Name)
 	}
 
 	loadCtx, loadCancel := loadContext(loadTimeout)
@@ -148,7 +142,7 @@ func (c *Configure) loadExportedField(field reflect.StructField, fieldValue refl
 
 func (c *Configure) loadUnexportedNotPtrField(field reflect.StructField, fieldValue reflect.Value, ct configTag, loadTimeout time.Duration) error {
 	if ct.Lazy || ct.Watch {
-		c.logger.Warnf("Field %s is not a pointer, lazy/watch options are ignored", field.Name)
+		return fmt.Errorf("field %s is not a pointer: lazy and watch are only supported on unexported pointer fields", field.Name)
 	}
 
 	dst := reflect.NewAt(field.Type, unsafe.Pointer(fieldValue.UnsafeAddr())).Interface()

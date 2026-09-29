@@ -5,17 +5,17 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/welllog/golib/testz"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 type configDemo struct {
-	Addr     addrDemo  `config:"namespace:test/demo1;key:addr;format:yaml;lazy:true;watch:true"`
-	addr     addrDemo  `config:"namespace:test/demo1;key:addr;format:yaml;lazy:true;watch:true"`
+	Addr     addrDemo  `config:"namespace:test/demo1;key:addr;format:yaml"`
+	addr     addrDemo  `config:"namespace:test/demo1;key:addr;format:yaml"`
 	addr2    *addrDemo `config:"namespace:test/demo1;key:addr;format:yaml"`
 	addr3    *addrDemo `config:"namespace:test/demo1;key:addr;format:yaml;lazy:true"`
 	addr4    *addrDemo `config:"namespace:test/demo1;key:addr;format:yaml;watch:true"`
@@ -61,11 +61,11 @@ func TestConfigure_InitAndPreload(t *testing.T) {
 	}
 	testz.Equal(t, c.no, 2)
 
-	valPtr, err := engine.TryLoad(unsafe.Pointer(&c.addr3), funcs)
+	valPtr, err := TryLoad(&c.addr3, funcs)
 	testz.Nil(t, err)
 
 	testz.Equal(t, (*c.addr3).Province, province1)
-	testz.Equal(t, (*addrDemo)(valPtr).Province, province1)
+	testz.Equal(t, valPtr.Province, province1)
 
 	province2 := "xichuan"
 	f, err := os.OpenFile("./etc/test2.yaml", os.O_RDWR, 0666)
@@ -94,7 +94,7 @@ func TestConfigure_InitAndPreload(t *testing.T) {
 	_, err = f.Write(b)
 	testz.Nil(t, err)
 
-	_, err = engine.TryLoad(unsafe.Pointer(&c.notExist), funcs)
+	_, err = TryLoad(&c.notExist, funcs)
 	if err == nil {
 		t.Errorf("notExist should be error")
 	}
@@ -115,4 +115,40 @@ func TestConfigure_InitAndPreloadZeroTimeout(t *testing.T) {
 	_, err = engine.InitAndPreload(&c, 0)
 	testz.Nil(t, err)
 	testz.Equal(t, "demo1", c.name)
+}
+
+func TestConfigure_InitAndPreload_ExportedFieldWatchError(t *testing.T) {
+	engine, err := FromFile("./etc/config2.yaml", WithCustomEtcdClient(&clientv3.Client{
+		KV:      &testKV{},
+		Watcher: &testWatcher{},
+	}))
+	testz.Nil(t, err)
+
+	type badExported struct {
+		Addr *addrDemo `config:"namespace:test/demo1;key:addr;watch:true"`
+	}
+
+	var b badExported
+	_, err = engine.InitAndPreload(&b, 0)
+	if err == nil || !strings.Contains(err.Error(), "is exported: lazy and watch are only supported") {
+		t.Fatalf("expected error for exported watch field, got: %v", err)
+	}
+}
+
+func TestConfigure_InitAndPreload_NotPtrFieldWatchError(t *testing.T) {
+	engine, err := FromFile("./etc/config2.yaml", WithCustomEtcdClient(&clientv3.Client{
+		KV:      &testKV{},
+		Watcher: &testWatcher{},
+	}))
+	testz.Nil(t, err)
+
+	type badNotPtr struct {
+		addr addrDemo `config:"namespace:test/demo1;key:addr;watch:true"`
+	}
+
+	var b badNotPtr
+	_, err = engine.InitAndPreload(&b, 0)
+	if err == nil || !strings.Contains(err.Error(), "is not a pointer: lazy and watch are only supported") {
+		t.Fatalf("expected error for non-pointer watch field, got: %v", err)
+	}
 }

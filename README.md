@@ -143,20 +143,16 @@ etcd, supports dynamic loading of configuration, and supports configuration upda
         # Whether to monitor the changes of the key path to dynamically load the configuration
         watch: true
 ```
-NOTE: the etcd driver loads lazily; `OnKeyChange` only fires for keys already accessed
-(via `Get`/`GetString`, even if the key was absent at the time, or via `WithEtcdPreload`).
-Change events on never-accessed keys are ignored. To watch a key from startup, access it
-once before registering the hook, or enable preload.
 #### Load configuration from custom etcd client
 When using a custom etcd client, keep writing `etcd://` as the source and pass
 the client via `WithCustomEtcdClient`; every `etcd://` source then reuses it
 instead of dialing its own connection:
-```
+```go
 c, err := config.FromFile("./config.yaml", config.WithCustomEtcdClient(cli))
 ```
 
 #### config usage
-```
+```go
 c, err := FromFile("./config.yaml")
 if err != nil {
     panic(err)
@@ -169,6 +165,16 @@ c.Int64(ctx, "test/demo2", "retry")
 c.Int(ctx, "test/demo2", "retry")
 c.Float64(ctx, "test/demo4", "rate")
 c.Bool(ctx, "test/demo4", "enable")
+
+// Fallback defaults
+timeout := c.IntOr(ctx, "test/demo2", "timeout", 3000)
+host := c.StringOr(ctx, "test/demo1", "host", "127.0.0.1")
+
+// ScopedConfigure
+demo1 := c.Namespace("test/demo1")
+appName, _ := demo1.String(ctx, "app_name")
+appPort := demo1.IntOr(ctx, "port", 8080)
+
 c.YamlDecode(ctx, "test/demo1", "log", &logConf)
 c.JsonDecode(ctx, "test/demo4", "data", &data)
 c.TomlDecode(ctx, "test/demo5", "data", &data)
@@ -178,6 +184,7 @@ c.GetRaw(ctx, "test/demo1", "app_name")
 c.UnsafeGetRaw(ctx, "test/demo1", "app_name")
 c.GetRawString(ctx, "test/demo1", "app_name")
 
+// Watch for changes
 err = c.OnKeyChange("test/demo1", "app_name", func([]byte) error {
     // do something
     return nil

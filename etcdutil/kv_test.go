@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -389,6 +390,71 @@ func TestKv_HandleHookMayCallOnKeyChange(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("hook calling OnKeyChange deadlocked")
 	}
+}
+
+func TestKv_OnKeyChangeWithoutPriorGet(t *testing.T) {
+	tkv := initTestKv()
+	twt := testWatcher{}
+	c := clientv3.Client{KV: tkv, Watcher: &twt}
+
+	kv := NewKv("/v1/", &c)
+	watcher := NewWatcher(&c)
+	watcher.Attach(kv)
+	watcher.Run(context.Background())
+
+	// Register OnKeyChange WITHOUT calling Get first
+	var received atomic.Pointer[string]
+	kv.OnKeyChange("never_read", func(b []byte) error {
+		s := string(b)
+		received.Store(&s)
+		return nil
+	})
+
+	// etcd receives a new PUT event
+	twt.notifyCreate("/v1/never_read", "fresh_val")
+	time.Sleep(10 * time.Millisecond)
+
+	val := received.Load()
+	if val == nil || *val != "fresh_val" {
+		t.Fatalf("hook should be called on PUT even without prior Get, got %v", val)
+	}
+
+	// Subsequent Get should hit the newly cached entry
+	got, err := kv.GetString(context.Background(), "never_read")
+	testz.Nil(t, err)
+	testz.Equal(t, "fresh_val", got)
+}
+
+func TestKv_OnKeyChangeWithPrevKvDiff(t *testing.T) {
+	tkv := initTestKv()
+	twt := testWatcher{}
+	c := clientv3.Client{KV: tkv, Watcher: &twt}
+
+	kv := NewKv("/v1/", &c)
+	watcher := NewWatcher(&c)
+	watcher.Attach(kv)
+	watcher.Run(context.Background())
+
+	var fireCount atomic.Int32
+	kv.OnKeyChange("test_diff", func(b []byte) error {
+		fireCount.Add(1)
+		return nil
+	})
+
+	// Case 1: Identical value rewrite (PrevKv == Kv). Hook must NOT fire!
+	twt.notifyPutWithPrevKv("/v1/test_diff", "same_val", "same_val")
+	time.Sleep(10 * time.Millisecond)
+	testz.Equal(t, int32(0), fireCount.Load(), "identical PUT should not trigger hook")
+
+	// Case 2: Value changed (PrevKv != Kv). Hook MUST fire!
+	twt.notifyPutWithPrevKv("/v1/test_diff", "same_val", "new_val")
+	time.Sleep(10 * time.Millisecond)
+	testz.Equal(t, int32(1), fireCount.Load(), "modified PUT must trigger hook")
+
+	// Case 3: Another identical rewrite after cached. Hook must NOT fire!
+	twt.notifyPutWithPrevKv("/v1/test_diff", "new_val", "new_val")
+	time.Sleep(10 * time.Millisecond)
+	testz.Equal(t, int32(1), fireCount.Load(), "identical PUT when cached must not trigger hook")
 }
 
 func BenchmarkKv_Handle(b *testing.B) {

@@ -142,16 +142,14 @@ golt的config库提供了统一的配置管理，支持从文件、etcd加载配
         # 是否监听该key path变动来动态加载配置
         watch: true
 ```
-注意：etcd驱动采用懒加载，`OnKeyChange` 只对被访问过的key生效（`Get`/`GetString`访问过即可，即使当时key不存在；或通过 `WithEtcdPreload` 预加载）。
-从未被访问过的key的变更通知会被忽略。若需要从启动起就监听某个key，请在注册hook前访问一次，或开启预加载。
 #### 从自定义etcd客户端加载配置
 使用自定义 etcd 客户端时，source 仍然写 `etcd://`，客户端通过 `WithCustomEtcdClient` 传入，
 所有 `etcd://` 源都会复用该客户端，不再单独建连：
-```
+```go
 c, err := config.FromFile("./config.yaml", config.WithCustomEtcdClient(cli))
 ```
 #### config使用概览
-```
+```go
 c, err := FromFile("./config.yaml")
 if err != nil {
     panic(err)
@@ -164,6 +162,16 @@ c.Int64(ctx, "test/demo2", "retry")
 c.Int(ctx, "test/demo2", "retry")
 c.Float64(ctx, "test/demo4", "rate")
 c.Bool(ctx, "test/demo4", "enable")
+
+// 默认值 Fallback
+timeout := c.IntOr(ctx, "test/demo2", "timeout", 3000)
+host := c.StringOr(ctx, "test/demo1", "host", "127.0.0.1")
+
+// 命名空间作用域 (ScopedConfigure)
+demo1 := c.Namespace("test/demo1")
+appName, _ := demo1.String(ctx, "app_name")
+appPort := demo1.IntOr(ctx, "port", 8080)
+
 c.YamlDecode(ctx, "test/demo1", "log", &logConf)
 c.JsonDecode(ctx, "test/demo4", "data", &data)
 c.TomlDecode(ctx, "test/demo5", "data", &data)
@@ -173,6 +181,7 @@ c.GetRaw(ctx, "test/demo1", "app_name")
 c.UnsafeGetRaw(ctx, "test/demo1", "app_name")
 c.GetRawString(ctx, "test/demo1", "app_name")
 
+// 监听变更
 err = c.OnKeyChange("test/demo1", "app_name", func([]byte) error {
     // do something
     return nil

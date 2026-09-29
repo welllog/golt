@@ -16,10 +16,18 @@ func (f fxLogger) Write(p []byte) (n int, err error) {
 		return 0, nil
 	}
 
-	if bytes.HasPrefix(p, []byte("[Fx] ERROR")) {
-		f.logger.Error(strz.UnsafeString(p[:len(p)-1]))
+	msg := p
+	if msg[len(msg)-1] == '\n' {
+		msg = msg[:len(msg)-1]
+		if len(msg) > 0 && msg[len(msg)-1] == '\r' {
+			msg = msg[:len(msg)-1]
+		}
+	}
+
+	if bytes.HasPrefix(msg, []byte("[Fx] ERROR")) {
+		f.logger.Error(strz.UnsafeString(msg))
 	} else {
-		f.logger.Debug(strz.UnsafeString(p[:len(p)-1]))
+		f.logger.Debug(strz.UnsafeString(msg))
 	}
 
 	return len(p), nil

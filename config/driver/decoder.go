@@ -16,6 +16,9 @@ var decoderMap = map[string]Decoder{
 	"toml": toml.Unmarshal,
 }
 
+// RegisterDecoder registers a custom decoder for a given format.
+// It is intended to be called during application initialization (e.g. in init() functions)
+// and is not thread-safe for concurrent registration and reading at runtime.
 func RegisterDecoder(format string, fn Decoder) {
 	decoderMap[format] = fn
 }

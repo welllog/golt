@@ -162,6 +162,46 @@ func (c *Configure) Bool(ctx context.Context, namespace, key string) (bool, erro
 	return strconv.ParseBool(s)
 }
 
+func (c *Configure) StringOr(ctx context.Context, namespace, key, def string) string {
+	s, err := c.String(ctx, namespace, key)
+	if err != nil {
+		return def
+	}
+	return s
+}
+
+func (c *Configure) IntOr(ctx context.Context, namespace, key string, def int) int {
+	v, err := c.Int(ctx, namespace, key)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+func (c *Configure) Int64Or(ctx context.Context, namespace, key string, def int64) int64 {
+	v, err := c.Int64(ctx, namespace, key)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+func (c *Configure) Float64Or(ctx context.Context, namespace, key string, def float64) float64 {
+	v, err := c.Float64(ctx, namespace, key)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+func (c *Configure) BoolOr(ctx context.Context, namespace, key string, def bool) bool {
+	v, err := c.Bool(ctx, namespace, key)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
 func (c *Configure) YamlDecode(ctx context.Context, namespace, key string, value any) error {
 	return c.Decode(ctx, namespace, key, value, driver.MustGetDecoder("yaml"))
 }
@@ -222,3 +262,94 @@ func unquote(s string) string {
 
 	return s
 }
+
+// ScopedConfigure represents a view of Configure scoped to a specific namespace.
+// It simplifies querying multiple keys under the same namespace without repeating
+// the namespace string.
+type ScopedConfigure struct {
+	c         *Configure
+	namespace string
+}
+
+// Namespace returns a ScopedConfigure bound to the given namespace.
+func (c *Configure) Namespace(namespace string) ScopedConfigure {
+	return ScopedConfigure{c: c, namespace: namespace}
+}
+
+// Name returns the bound namespace name.
+func (s ScopedConfigure) Name() string {
+	return s.namespace
+}
+
+func (s ScopedConfigure) GetRaw(ctx context.Context, key string) ([]byte, error) {
+	return s.c.GetRaw(ctx, s.namespace, key)
+}
+
+func (s ScopedConfigure) UnsafeGetRaw(ctx context.Context, key string) ([]byte, error) {
+	return s.c.UnsafeGetRaw(ctx, s.namespace, key)
+}
+
+func (s ScopedConfigure) GetRawString(ctx context.Context, key string) (string, error) {
+	return s.c.GetRawString(ctx, s.namespace, key)
+}
+
+func (s ScopedConfigure) String(ctx context.Context, key string) (string, error) {
+	return s.c.String(ctx, s.namespace, key)
+}
+
+func (s ScopedConfigure) Int(ctx context.Context, key string) (int, error) {
+	return s.c.Int(ctx, s.namespace, key)
+}
+
+func (s ScopedConfigure) Int64(ctx context.Context, key string) (int64, error) {
+	return s.c.Int64(ctx, s.namespace, key)
+}
+
+func (s ScopedConfigure) Float64(ctx context.Context, key string) (float64, error) {
+	return s.c.Float64(ctx, s.namespace, key)
+}
+
+func (s ScopedConfigure) Bool(ctx context.Context, key string) (bool, error) {
+	return s.c.Bool(ctx, s.namespace, key)
+}
+
+func (s ScopedConfigure) StringOr(ctx context.Context, key, def string) string {
+	return s.c.StringOr(ctx, s.namespace, key, def)
+}
+
+func (s ScopedConfigure) IntOr(ctx context.Context, key string, def int) int {
+	return s.c.IntOr(ctx, s.namespace, key, def)
+}
+
+func (s ScopedConfigure) Int64Or(ctx context.Context, key string, def int64) int64 {
+	return s.c.Int64Or(ctx, s.namespace, key, def)
+}
+
+func (s ScopedConfigure) Float64Or(ctx context.Context, key string, def float64) float64 {
+	return s.c.Float64Or(ctx, s.namespace, key, def)
+}
+
+func (s ScopedConfigure) BoolOr(ctx context.Context, key string, def bool) bool {
+	return s.c.BoolOr(ctx, s.namespace, key, def)
+}
+
+func (s ScopedConfigure) YamlDecode(ctx context.Context, key string, value any) error {
+	return s.c.YamlDecode(ctx, s.namespace, key, value)
+}
+
+func (s ScopedConfigure) JsonDecode(ctx context.Context, key string, value any) error {
+	return s.c.JsonDecode(ctx, s.namespace, key, value)
+}
+
+func (s ScopedConfigure) TomlDecode(ctx context.Context, key string, value any) error {
+	return s.c.TomlDecode(ctx, s.namespace, key, value)
+}
+
+func (s ScopedConfigure) Decode(ctx context.Context, key string, value any, fn driver.Decoder) error {
+	return s.c.Decode(ctx, s.namespace, key, value, fn)
+}
+
+func (s ScopedConfigure) OnKeyChange(key string, hook func([]byte) error) error {
+	return s.c.OnKeyChange(s.namespace, key, hook)
+}
+
