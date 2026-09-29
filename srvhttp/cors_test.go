@@ -1,6 +1,7 @@
 package srvhttp
 
 import (
+	"net/http/httptest"
 	"testing"
 
 	"github.com/welllog/golib/testz"
@@ -39,4 +40,47 @@ func TestValidateOrigin(t *testing.T) {
 
 	testz.Equal(t, true, cfg.validateOrigin("https://exact.com"))
 	testz.Equal(t, false, cfg.validateOrigin("https://exact.com.evil.io"))
+}
+
+func TestCors_AllowCredentials_With_AllowAllOrigins(t *testing.T) {
+	cfg := CorsConfig{
+		AllowAllOrigins:  true,
+		AllowCredentials: true,
+	}
+	cfg.init()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "http://example.com/api", nil)
+	req.Header.Set("Origin", "http://foo.com")
+
+	cfg.apply(req, rec)
+
+	// Under W3C CORS spec, when AllowCredentials is true, Allow-Origin cannot be '*'
+	testz.Equal(t, "http://foo.com", rec.Header().Get("Access-Control-Allow-Origin"))
+	testz.Equal(t, "true", rec.Header().Get("Access-Control-Allow-Credentials"))
+	testz.Equal(t, "Origin", rec.Header().Get("Vary"))
+}
+
+func TestCors_HeaderIsolation(t *testing.T) {
+	cfg := CorsConfig{
+		AllowAllOrigins: true,
+		AllowHeaders:    []string{"X-Custom-Header"},
+	}
+	cfg.init()
+
+	rec1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest("OPTIONS", "http://example.com/api", nil)
+	req1.Header.Set("Origin", "http://foo.com")
+	cfg.apply(req1, rec1)
+
+	// Mutate rec1's header slice
+	rec1.Header().Add("Access-Control-Allow-Headers", "X-Injected-Header")
+
+	// Apply on a new request; preflightHeaders must not be affected
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("OPTIONS", "http://example.com/api", nil)
+	req2.Header.Set("Origin", "http://bar.com")
+	cfg.apply(req2, rec2)
+
+	testz.Equal(t, "X-Custom-Header", rec2.Header().Get("Access-Control-Allow-Headers"))
 }

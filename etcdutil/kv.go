@@ -173,7 +173,7 @@ func (k *Kv) UnsafeGet(ctx context.Context, key string) ([]byte, error) {
 // cached string and the raw bytes so callers convert without an extra copy:
 // exactly one string(b) conversion happens, for the cache.
 func (k *Kv) getAndCache(ctx context.Context, key, cacheKey string) (string, []byte, error) {
-	b, err := k.GetNoCache(ctx, k.etcdKey(key))
+	b, err := k.GetNoCache(ctx, key)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			// cached an entry with contentExists=false, to avoid request etcd
@@ -242,7 +242,7 @@ func (k *Kv) Handle(event *clientv3.Event) {
 			if event.PrevKv == nil || !bytes.Equal(event.PrevKv.Value, event.Kv.Value) {
 				diff = true
 			}
-			k.entries[key] = &entry{value: string(event.Kv.Value), exists: true}
+			k.entries[string(event.Kv.Key[len(k.prefix):])] = &entry{value: string(event.Kv.Value), exists: true}
 		}
 
 		// slice-header snapshot only: OnKeyChange appends under k.mu, so later

@@ -28,7 +28,7 @@ func (r Router) Use(mds ...Middleware) {
 				index        int
 			)
 
-			ctx := writer.(*Context)
+			ctx := getContext(writer, request)
 			num := len(mds)
 
 			chainHandler = func(ctx *Context) (any, error) {
@@ -38,7 +38,7 @@ func (r Router) Use(mds ...Middleware) {
 					return md(ctx, chainHandler)
 				}
 
-				next.ServeHTTP(ctx, ctx.Request)
+				next.ServeHTTP(writer, ctx.Request)
 				return ctx.rsp, ctx.err
 			}
 
@@ -56,12 +56,11 @@ func (r Router) UseStd(mds ...func(http.Handler) http.Handler) {
 	}
 
 	r.r.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			for i := len(mds) - 1; i >= 0; i-- {
-				next = mds[i](next)
-			}
-			next.ServeHTTP(writer, request)
-		})
+		chain := next
+		for i := len(mds) - 1; i >= 0; i-- {
+			chain = mds[i](chain)
+		}
+		return chain
 	})
 }
 
@@ -160,7 +159,7 @@ func (r Route) Name(name string) {
 
 func wrapHandler(handler Handler) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		ctx := writer.(*Context)
+		ctx := getContext(writer, request)
 		ctx.rsp, ctx.err = handler(ctx)
 	}
 }

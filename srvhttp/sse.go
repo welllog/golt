@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/welllog/golib/strz"
 )
 
 type Event struct {
@@ -65,16 +67,27 @@ func (e Event) Encode(c *Context) error {
 	}
 
 	buf.Write(dataPrefix)
-	switch kindOfData(e.Data) {
-	case reflect.Struct, reflect.Slice, reflect.Map:
-		err := json.NewEncoder(buf).Encode(e.Data)
-		if err != nil {
-			return err
-		}
-		buf.Write(lineFeed)
-	default:
-		_, _ = dataReplacer.WriteString(buf, fmt.Sprint(e.Data))
+	switch val := e.Data.(type) {
+	case string:
+		_, _ = dataReplacer.WriteString(buf, val)
 		buf.WriteString("\n\n")
+	case []byte:
+		_, _ = dataReplacer.WriteString(buf, strz.UnsafeString(val))
+		buf.WriteString("\n\n")
+	case nil:
+		buf.WriteString("\n\n")
+	default:
+		switch kindOfData(val) {
+		case reflect.Struct, reflect.Slice, reflect.Map:
+			err := json.NewEncoder(buf).Encode(val)
+			if err != nil {
+				return err
+			}
+			buf.Write(lineFeed)
+		default:
+			_, _ = dataReplacer.WriteString(buf, fmt.Sprint(val))
+			buf.WriteString("\n\n")
+		}
 	}
 
 	_, err := c.Write(buf.Bytes())

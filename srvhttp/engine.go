@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -18,6 +19,7 @@ type Engine struct {
 	logger  contract.Logger
 	rspFunc ResponseFunc
 	debug   bool
+	pool    sync.Pool
 }
 
 type Option func(*Engine)
@@ -42,6 +44,9 @@ func WithDebug(open bool) Option {
 
 func New(opts ...Option) *Engine {
 	e := Engine{Router: Router{r: mux.NewRouter()}, rspFunc: defResponseFunc, logger: olog.GetLogger()}
+	e.pool.New = func() any {
+		return &Context{}
+	}
 	for _, opt := range opts {
 		opt(&e)
 	}
@@ -121,8 +126,8 @@ func (e *Engine) initMethodNotAllowedHandler(handler http.Handler) {
 			e.r.MethodNotAllowedHandler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				start := time.Now()
 				ctx := NewContext(writer, request)
-				handler.ServeHTTP(ctx, request)
-				e.requestDebug(ctx.status, time.Since(start), request, ctx.err)
+				handler.ServeHTTP(ctx, ctx.Request)
+				e.requestDebug(ctx.status, time.Since(start), ctx.Request, ctx.err)
 			})
 
 			return
@@ -149,7 +154,8 @@ func (e *Engine) middlewareOne() mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			start := time.Now()
-			ctx := NewContext(writer, request)
+			ctx := e.acquireContext(writer, request)
+			defer e.releaseContext(ctx)
 
 			// registered first, so it also guards the response writing below
 			defer func() {
@@ -178,6 +184,20 @@ func (e *Engine) middlewareOne() mux.MiddlewareFunc {
 			}
 		})
 	}
+}
+
+func (e *Engine) acquireContext(w http.ResponseWriter, req *http.Request) *Context {
+	c := e.pool.Get().(*Context)
+	c.reset(w, req)
+	return c
+}
+
+func (e *Engine) releaseContext(c *Context) {
+	if c.status == http.StatusSwitchingProtocols {
+		return
+	}
+	c.clean()
+	e.pool.Put(c)
 }
 
 func (e *Engine) requestDebug(httpCode int, cost time.Duration, request *http.Request, err error) {

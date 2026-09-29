@@ -2,6 +2,7 @@ package srvhttp
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -51,10 +52,10 @@ func (c *CorsConfig) apply(request *http.Request, writer http.ResponseWriter) {
 	}
 
 	for k, v := range setHeaders {
-		h[k] = v
+		h[k] = slices.Clone(v)
 	}
 
-	if !c.AllowAllOrigins {
+	if !c.AllowAllOrigins || c.AllowCredentials {
 		h.Set("Access-Control-Allow-Origin", origin)
 	}
 }
@@ -132,7 +133,7 @@ func (c *CorsConfig) genNormalHeaders() {
 		)
 	}
 
-	if c.AllowAllOrigins {
+	if c.AllowAllOrigins && !c.AllowCredentials {
 		h.Set("Access-Control-Allow-Origin", "*")
 	} else {
 		h.Set("Vary", "Origin")
@@ -152,7 +153,7 @@ func (c *CorsConfig) genPreflightHeaders() {
 		h.Set("Access-Control-Allow-Credentials", "true")
 	}
 
-	if c.AllowAllOrigins {
+	if c.AllowAllOrigins && !c.AllowCredentials {
 		h.Set("Access-Control-Allow-Origin", "*")
 	} else {
 		h.Set("Vary", "Origin")

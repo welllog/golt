@@ -1,7 +1,6 @@
 package srvhttp
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -37,11 +36,12 @@ func defResponseFunc(response any, err error, c *Context) {
 		return
 	}
 
-	var buf bytes.Buffer
+	buf := c.Buffer()
+	buf.Reset()
 	buf.Grow(128)
 
 	buf.WriteString(`{"data":`)
-	if encErr := json.NewEncoder(&buf).Encode(response); encErr != nil {
+	if encErr := json.NewEncoder(buf).Encode(response); encErr != nil {
 		writeEncodeFallback(c, encErr)
 		return
 	}

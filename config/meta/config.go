@@ -32,6 +32,9 @@ func (c *Config) SourceAddr() string {
 }
 
 func (r *Rule) Namespaces() []string {
+	if !strings.Contains(r.Namespace, "|") {
+		return []string{strings.TrimSpace(r.Namespace)}
+	}
 	ns := strings.Split(r.Namespace, "|")
 	for i := range ns {
 		ns[i] = strings.TrimSpace(ns[i])

@@ -232,8 +232,12 @@ func (c *Configure) Decode(ctx context.Context, namespace, key string, value any
 // WithCloseCustomEtcdClient was set. It must not be called concurrently;
 // repeated sequential calls are no-ops.
 func (c *Configure) Close() {
+	seen := make(map[driver.Driver]struct{}, len(c.ds))
 	for _, v := range c.ds {
-		v.Close()
+		if _, ok := seen[v]; !ok {
+			seen[v] = struct{}{}
+			v.Close()
+		}
 	}
 
 	if c.closeEtcdCli != nil {
@@ -352,4 +356,3 @@ func (s ScopedConfigure) Decode(ctx context.Context, key string, value any, fn d
 func (s ScopedConfigure) OnKeyChange(key string, hook func([]byte) error) error {
 	return s.c.OnKeyChange(s.namespace, key, hook)
 }
-

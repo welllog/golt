@@ -104,3 +104,49 @@ func TestRouter_UseStd(t *testing.T) {
 		}
 	}
 }
+
+type wrappedWriter struct {
+	http.ResponseWriter
+	intercepted bool
+}
+
+func (w *wrappedWriter) WriteHeader(status int) {
+	w.intercepted = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *wrappedWriter) Write(b []byte) (int, error) {
+	w.intercepted = true
+	return w.ResponseWriter.Write(b)
+}
+
+func TestRouter_UseStd_WrappedResponseWriter(t *testing.T) {
+	engine := New()
+
+	engine.UseStd(
+		func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				wrapped := &wrappedWriter{ResponseWriter: w}
+				next.ServeHTTP(wrapped, r)
+			})
+		},
+	)
+	engine.Use(func(c *Context, next Handler) (any, error) {
+		c.Set("key", "val")
+		return next(c)
+	})
+	engine.GET("/wrapped", func(c *Context) (any, error) {
+		val, ok := c.Get("key")
+		testz.Equal(t, true, ok)
+		testz.Equal(t, "val", val)
+		return "hello wrapped", nil
+	})
+
+	srv := httptest.NewServer(engine)
+	defer srv.Close()
+
+	rsp, err := srv.Client().Get(srv.URL + "/wrapped")
+	testz.Nil(t, err)
+	defer rsp.Body.Close()
+	testz.Equal(t, http.StatusOK, rsp.StatusCode)
+}

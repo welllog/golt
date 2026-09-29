@@ -27,13 +27,61 @@ type Context struct {
 	buf            bytes.Buffer
 }
 
+type engineCtxKey struct{}
+
+var ctxKey = engineCtxKey{}
+
 // NewContext returns a new Context instance.
 func NewContext(rsp http.ResponseWriter, req *http.Request) *Context {
-	return &Context{
-		Context:        req.Context(),
-		Request:        req,
-		responseWriter: rsp,
+	c := &Context{}
+	c.reset(rsp, req)
+	return c
+}
+
+func (c *Context) reset(rsp http.ResponseWriter, req *http.Request) {
+	c.responseWriter = rsp
+	c.status = 0
+	c.size = 0
+	c.rsp = nil
+	c.err = nil
+	c.buf.Reset()
+	if c.values != nil {
+		clear(c.values)
 	}
+
+	reqCtx := context.WithValue(req.Context(), ctxKey, c)
+	c.Context = reqCtx
+	c.Request = req.WithContext(reqCtx)
+}
+
+func (c *Context) clean() {
+	c.responseWriter = nil
+	c.Request = nil
+	c.Context = nil
+	c.rsp = nil
+	c.err = nil
+	if c.values != nil {
+		clear(c.values)
+	}
+	c.buf.Reset()
+}
+
+// FromContext extracts the *Context from a standard context.Context.
+func FromContext(ctx context.Context) *Context {
+	if c, ok := ctx.Value(ctxKey).(*Context); ok {
+		return c
+	}
+	return nil
+}
+
+func getContext(writer http.ResponseWriter, request *http.Request) *Context {
+	if c, ok := writer.(*Context); ok {
+		return c
+	}
+	if c := FromContext(request.Context()); c != nil {
+		return c
+	}
+	return NewContext(writer, request)
 }
 
 // Set sets the value associated with key.
