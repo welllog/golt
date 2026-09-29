@@ -10,11 +10,19 @@ import (
 	"time"
 )
 
+// defaultReadHeaderTimeout bounds the time spent reading request headers, so
+// a slow client cannot hold connections open indefinitely.
+const defaultReadHeaderTimeout = 30 * time.Second
+
 // Run starts the server on addr and blocks until it stops.
 // A normal Shutdown is not an error. Use RunGracefully for signal-driven
-// graceful shutdown; build your own http.Server for TLS or timeout tuning.
+// graceful shutdown; build your own http.Server for TLS or other timeout tuning.
 func (e *Engine) Run(addr string) error {
-	srv := &http.Server{Addr: addr, Handler: e}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           e,
+		ReadHeaderTimeout: defaultReadHeaderTimeout,
+	}
 
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -26,7 +34,11 @@ func (e *Engine) Run(addr string) error {
 // drains in-flight requests within timeout. ctx is the parent of the shutdown
 // context; a non-positive timeout means no timeout.
 func (e *Engine) RunGracefully(ctx context.Context, addr string, timeout time.Duration) error {
-	srv := &http.Server{Addr: addr, Handler: e}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           e,
+		ReadHeaderTimeout: defaultReadHeaderTimeout,
+	}
 
 	errCh := make(chan error, 1)
 	go func() {

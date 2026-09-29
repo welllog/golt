@@ -63,7 +63,7 @@ func (e *Engine) UseCors(c CorsConfig) {
 	cc.init()
 
 	e.initMethodNotAllowedHandler(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method == http.MethodOptions {
+		if isPreflight(request) {
 			cc.apply(request, writer)
 			writer.WriteHeader(http.StatusNoContent)
 			return
@@ -76,7 +76,9 @@ func (e *Engine) UseCors(c CorsConfig) {
 		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			cc.apply(request, writer)
 
-			if request.Method == http.MethodOptions {
+			// only cross-origin preflights are answered here; plain OPTIONS
+			// requests are routed to the handler
+			if isPreflight(request) {
 				writer.WriteHeader(http.StatusNoContent)
 				return
 			}

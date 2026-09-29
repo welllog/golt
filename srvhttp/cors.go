@@ -36,12 +36,12 @@ func (c *CorsConfig) apply(request *http.Request, writer http.ResponseWriter) {
 	origin := request.Header.Get("Origin")
 
 	if notCors(origin, request.Host) {
-		writer.Header().Set("Vary", "Origin")
+		appendVaryOrigin(writer.Header())
 		return
 	}
 
 	if !c.validateOrigin(origin) {
-		writer.Header().Set("Vary", "Origin")
+		appendVaryOrigin(writer.Header())
 		return
 	}
 
@@ -52,12 +52,56 @@ func (c *CorsConfig) apply(request *http.Request, writer http.ResponseWriter) {
 	}
 
 	for k, v := range setHeaders {
+		if k == "Vary" {
+			// merged instead of copied so Vary values set by other
+			// middlewares (e.g. Accept-Encoding) survive
+			appendVaryOrigin(h)
+			continue
+		}
 		h[k] = slices.Clone(v)
 	}
 
 	if !c.AllowAllOrigins || c.AllowCredentials {
 		h.Set("Access-Control-Allow-Origin", origin)
 	}
+}
+
+// isPreflight reports whether the request is a CORS preflight: an OPTIONS
+// request from a cross-origin source asking permission for a follow-up
+// request (Origin + Access-Control-Request-Method headers). Plain OPTIONS
+// requests, same-origin ones included, are left for the router.
+func isPreflight(request *http.Request) bool {
+	if request.Method != http.MethodOptions {
+		return false
+	}
+
+	if request.Header.Get("Access-Control-Request-Method") == "" {
+		return false
+	}
+
+	origin := request.Header.Get("Origin")
+	return origin != "" && !notCors(origin, request.Host)
+}
+
+// appendVaryOrigin adds Origin to the Vary header, preserving values already
+// set (e.g. Accept-Encoding by a compression middleware) instead of
+// overwriting them. Idempotent.
+func appendVaryOrigin(h http.Header) {
+	vals := h.Values("Vary")
+	for _, v := range vals {
+		for _, item := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(item), "origin") {
+				return
+			}
+		}
+	}
+
+	if len(vals) == 0 {
+		h.Set("Vary", "Origin")
+		return
+	}
+	// merged into one comma-joined value: Header.Get only exposes the first
+	vals[len(vals)-1] += ", Origin"
 }
 
 func (c *CorsConfig) validateOrigin(origin string) bool {

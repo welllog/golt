@@ -179,8 +179,8 @@ func TestWatcher_CanceledContextExits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	// a done ctx makes Watch return a nil channel; the goroutine must exit
-	// instead of ranging over the nil channel forever
+	// a done ctx makes clientv3 return an already-closed channel; the
+	// goroutine must exit instead of reconnecting forever
 	before := runtime.NumGoroutine()
 	watcher.Run(ctx)
 
@@ -193,9 +193,36 @@ func TestWatcher_CanceledContextExits(t *testing.T) {
 	}
 }
 
+func TestWatcher_ClientClosedExits(t *testing.T) {
+	twt := testWatcher{}
+	c := clientv3.Client{Watcher: &twt}
+
+	watcher := NewWatcher(&c)
+	watcher.Attach(NewKv("/v1/", &c))
+
+	before := runtime.NumGoroutine()
+	watcher.Run(context.Background())
+	waitForChannels(t, &twt, 1)
+
+	// a closed client makes every Watch return an already-closed channel;
+	// the goroutine must exit instead of reconnecting forever
+	twt.close()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := runtime.NumGoroutine(); n > before {
+		t.Fatalf("watch goroutine leaked: %d goroutines, want <= %d", n, before)
+	}
+	// a spinning watcher would dial again every watchRestartInterval
+	testz.Equal(t, 1, twt.channelCount())
+}
+
 type testWatcher struct {
-	chs []*wch
-	mu  sync.RWMutex
+	chs    []*wch
+	closed bool
+	mu     sync.RWMutex
 }
 
 type wch struct {
@@ -205,9 +232,11 @@ type wch struct {
 }
 
 func (t *testWatcher) Watch(ctx context.Context, key string, opts ...clientv3.OpOption) clientv3.WatchChan {
-	// mirror clientv3: a done ctx yields a nil channel
-	if ctx.Err() != nil {
-		return nil
+	// mirror clientv3: a done ctx or a closed client yields a closed channel
+	if ctx.Err() != nil || t.isClosed() {
+		ch := make(chan clientv3.WatchResponse)
+		close(ch)
+		return ch
 	}
 
 	var op clientv3.Op
@@ -224,6 +253,23 @@ func (t *testWatcher) Watch(ctx context.Context, key string, opts ...clientv3.Op
 	t.chs = append(t.chs, &w)
 	t.mu.Unlock()
 	return w.ch
+}
+
+func (t *testWatcher) isClosed() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.closed
+}
+
+// close simulates closing the etcd client: live channels are closed and
+// every later Watch returns an already-closed channel.
+func (t *testWatcher) close() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.closed = true
+	for _, v := range t.chs {
+		close(v.ch)
+	}
 }
 
 func (t *testWatcher) notifyCreate(key, value string) {

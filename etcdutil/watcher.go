@@ -110,17 +110,18 @@ func (w *Watcher) watch(ctx context.Context, prefix string) {
 	var lastRev int64
 
 	for {
-		// nil channel: ctx cancelled or client closed before the stream was created
-		if ch == nil {
-			w.logger.Warnf("watch etcd key prefix: %s stopped", prefix)
-			return
-		}
-
+		// clientv3 never returns a nil channel: it returns a closed one when
+		// the watch ctx is done or the client is closed, and delivers a
+		// Canceled response (Err() != nil) before closing when the stream
+		// dies. Transient network errors are reconnected internally and do
+		// not close the channel at all.
+		streamFailed := false
 		for ret := range ch {
 			// a canceled/compacted stream is dead: restart it below,
 			// otherwise events would be silently dropped forever
 			if err := ret.Err(); err != nil {
 				w.logger.Warnf("watch prefix %s error: %v, restarting", prefix, err)
+				streamFailed = true
 				if ret.CompactRevision != 0 {
 					// history below the compact revision is gone; resume from now
 					lastRev = 0
@@ -153,6 +154,15 @@ func (w *Watcher) watch(ctx context.Context, prefix string) {
 					}
 				}
 			}
+		}
+
+		// the channel closed without an error response: clientv3 only does
+		// this for a cancelled watch ctx or a closed client, and every Watch
+		// on a closed client returns a closed channel again, so retrying
+		// would spin forever
+		if !streamFailed {
+			w.logger.Warnf("watch etcd key prefix: %s stopped: channel closed", prefix)
+			return
 		}
 
 		select {
